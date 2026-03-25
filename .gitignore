@@ -15,3 +15,6 @@ ckb_v*/
 
 # claude
 .claude/
+
+# prompt
+prompt.md
