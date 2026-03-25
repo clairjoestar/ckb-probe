@@ -18,3 +18,10 @@ ckb_v*/
 
 # prompt
 prompt.md
+
+# analysis output
+self-compiled*.json
+official-release*.json
+self-compiled*.txt
+official-release*.txt
+report-*.md
