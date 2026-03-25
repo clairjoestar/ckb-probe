@@ -1,0 +1,32 @@
+[package]
+name = "ckb-probe"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Deep observability tool for CKB nodes based on eBPF"
+
+[[bin]]
+name = "ckb-probe"
+path = "src/main.rs"
+
+[dependencies]
+ckb-probe-common = { path = "../ckb-probe-common" }
+
+# ELF parsing
+goblin = "0.9"
+
+# Rust symbol demangling
+rustc-demangle = "0.1"
+
+# CLI
+clap = { version = "4", features = ["derive", "env"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Terminal output
+colored = "2"
+
+# Error handling
+anyhow = "1"

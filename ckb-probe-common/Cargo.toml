@@ -1,0 +1,9 @@
+[package]
+name = "ckb-probe-common"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Shared type definitions for ckb-probe"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }

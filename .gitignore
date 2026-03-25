@@ -1,0 +1,17 @@
+# Build output
+target/
+
+# CKB source code
+ckb/
+
+# Downloaded releases
+ckb_v*/
+
+# Compressed archives
+*.tar.gz
+*.tar.xz
+*.tar.bz2
+*.zip
+
+# claude
+.claude/
