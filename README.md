@@ -2,40 +2,50 @@
 
 基于 eBPF 的 CKB 全节点深度可观测性工具。
 
-## 项目简介
+Deep observability tool for CKB full nodes, powered by eBPF.
+
+---
+
+## 项目简介 / Introduction
 
 ckb-probe 通过 eBPF（uprobe / kprobe / tracepoint）为 CKB 全节点提供应用语义级的实时性能洞察。当前已实现 `symbols` 子命令，用于扫描 CKB 二进制文件的 ELF 符号表，分析 uprobe 可挂载的探针目标。
 
-## 功能特性
+ckb-probe leverages eBPF (uprobe / kprobe / tracepoint) to deliver application-semantic, real-time performance insights for CKB full nodes. The `symbols` subcommand is currently implemented, which scans the ELF symbol table of a CKB binary and analyses uprobe-attachable probe targets.
 
-- **ELF 符号解析**：基于 `goblin` 解析 `.symtab` / `.dynsym`，自动识别二进制的 strip 状态和 DWARF 调试信息
-- **RocksDB 链接方式检测**：自动判断 RocksDB 是静态链接（嵌入二进制）还是动态链接（librocksdb.so）
-- **三级符号分类**：
-  - **Tier 1** — RocksDB C API 符号（`extern "C"`，无 mangling），跨版本稳定，理想的 uprobe 目标（20 个追踪目标）
-  - **Tier 2** — Rust 跨 crate 公开函数（mangled），存在于大多数自编译 release 版本中（21 个追踪目标）
-  - **Tier 3** — 被内联/LTO 消除/crate 内部函数，release 构建中通常不可用（12 个追踪目标）
-- **多种输出格式**：彩色终端报告 / JSON 机器可读格式
-- **灵活过滤**：按关键字子串过滤、按 Tier 级别过滤
+## 功能特性 / Features
 
-## 构建
+- **ELF 符号解析 / ELF Symbol Parsing**：基于 `goblin` 解析 `.symtab` / `.dynsym`，自动识别二进制的 strip 状态和 DWARF 调试信息。Parses `.symtab` / `.dynsym` via `goblin`, detects strip status and DWARF debug info automatically.
+- **RocksDB 链接方式检测 / RocksDB Linkage Detection**：自动判断 RocksDB 是静态链接（嵌入二进制）还是动态链接（librocksdb.so）。Determines whether RocksDB is statically linked (embedded) or dynamically linked (librocksdb.so).
+- **三级符号分类 / Three-tier Symbol Classification**：
+  - **Tier 1** — RocksDB C API 符号（`extern "C"`，无 mangling），跨版本稳定，理想的 uprobe 目标（20 个追踪目标）。RocksDB C API symbols (`extern "C"`, no mangling), stable across versions, ideal uprobe targets (20 tracked).
+  - **Tier 2** — Rust 跨 crate 公开函数（mangled），存在于大多数自编译 release 版本中（21 个追踪目标）。Rust cross-crate public functions (mangled), present in most self-compiled release builds (21 tracked).
+  - **Tier 3** — 被内联/LTO 消除/crate 内部函数，release 构建中通常不可用（12 个追踪目标）。Inlined / LTO-eliminated / crate-internal functions, usually unavailable in release builds (12 tracked).
+- **多种输出格式 / Multiple Output Formats**：彩色终端报告 / JSON 机器可读格式。Colored terminal report / machine-readable JSON.
+- **灵活过滤 / Flexible Filtering**：按关键字子串过滤、按 Tier 级别过滤。Filter by keyword substring or by tier level.
+
+## 构建 / Build
 
 ```bash
 # 需要 Rust 工具链（推荐 rustup 安装）
+# Requires Rust toolchain (rustup recommended)
 cargo build --release
 ```
 
 构建产物位于 `target/release/ckb-probe`。
 
-## 使用方法
+The binary is located at `target/release/ckb-probe`.
 
-### 基本用法
+## 使用方法 / Usage
+
+### 基本用法 / Basic Usage
 
 ```bash
 # 分析 CKB 二进制的符号可用性
+# Analyse symbol availability of a CKB binary
 ckb-probe symbols /path/to/ckb
 ```
 
-### 输出示例
+### 输出示例 / Example Output
 
 ```
 ════════════════════════════════════════════════════════════════════════
@@ -67,100 +77,84 @@ ckb-probe symbols /path/to/ckb
   Tier 3:  18 tracked functions not found
 ```
 
-### 详细模式
-
-显示 mangled 名称、虚拟地址、符号大小和描述信息：
+### 详细模式 / Verbose Mode
 
 ```bash
+# 显示 mangled 名称、虚拟地址、符号大小和描述信息
+# Show mangled names, addresses, sizes, and descriptions
 ckb-probe symbols /path/to/ckb --verbose
-# 或
 ckb-probe symbols /path/to/ckb -v
 ```
 
-### JSON 输出
-
-适合管道处理和自动化分析：
+### JSON 输出 / JSON Output
 
 ```bash
-# 输出完整 JSON 报告
+# 输出完整 JSON 报告 / Full JSON report
 ckb-probe symbols /path/to/ckb --json
 
-# 配合 jq 查询 Tier 1 符号数量
+# 配合 jq 查询 / Query with jq
 ckb-probe symbols /path/to/ckb --json | jq '.tier1 | length'
-
-# 查询 RocksDB 链接方式
 ckb-probe symbols /path/to/ckb --json | jq '.rocksdb_linkage'
 ```
 
-### 按 Tier 过滤
+### 按 Tier 过滤 / Filter by Tier
 
 ```bash
-# 只显示 Tier 1（RocksDB C API 符号）
-ckb-probe symbols /path/to/ckb --tier 1
-
-# 只显示 Tier 2（Rust 函数符号）
-ckb-probe symbols /path/to/ckb --tier 2
-
-# 只显示 Tier 3（不可用的符号）
-ckb-probe symbols /path/to/ckb --tier 3
+ckb-probe symbols /path/to/ckb --tier 1   # Tier 1 only (RocksDB C API)
+ckb-probe symbols /path/to/ckb --tier 2   # Tier 2 only (Rust functions)
+ckb-probe symbols /path/to/ckb --tier 3   # Tier 3 only (unavailable)
 ```
 
-### 按关键字过滤
-
-大小写不敏感的子串匹配：
+### 按关键字过滤 / Filter by Keyword
 
 ```bash
-# 过滤包含 "transaction" 的符号
+# 大小写不敏感 / Case-insensitive substring match
 ckb-probe symbols /path/to/ckb --filter transaction
-
-# 过滤包含 "iterator" 的符号，JSON 输出
 ckb-probe symbols /path/to/ckb --filter iterator --json
-
-# 组合使用：Tier 1 中包含 "get" 的符号
 ckb-probe symbols /path/to/ckb --tier 1 --filter get
 ```
 
-### 查看帮助
+### 查看帮助 / Help
 
 ```bash
 ckb-probe --help
 ckb-probe symbols --help
 ```
 
-## 运行测试
+## 运行测试 / Tests
 
 ```bash
 cargo test --workspace
 ```
 
-## 项目结构
+## 项目结构 / Project Structure
 
 ```
 ckb-probe/
-├── Cargo.toml                  # workspace 根配置
-├── ckb-probe-common/           # 共享类型定义
-│   └── src/lib.rs              # SymbolTier, SymbolCategory, ProbeTargets 等
-├── ckb-probe/                  # 主 CLI 程序
+├── Cargo.toml                  # workspace root
+├── ckb-probe-common/           # shared type definitions
+│   └── src/lib.rs              # SymbolTier, SymbolCategory, ProbeTargets, etc.
+├── ckb-probe/                  # main CLI binary
 │   └── src/
-│       ├── main.rs             # 入口
-│       ├── cli.rs              # clap 命令行定义
+│       ├── main.rs             # entry point
+│       ├── cli.rs              # clap CLI definitions
 │       └── commands/
-│           └── symbols.rs      # symbols 子命令核心实现
-└── ckb-probe-ebpf/            # eBPF 探针程序（Week 3 实现）
+│           └── symbols.rs      # symbols subcommand core implementation
+└── ckb-probe-ebpf/            # eBPF probe programs (Week 3)
 ```
 
-## 符号分级说明
+## 符号分级说明 / Symbol Tier Reference
 
-| 级别 | 来源 | 稳定性 | 用途 |
+| 级别 / Tier | 来源 / Source | 稳定性 / Stability | 用途 / Purpose |
 |------|------|--------|------|
-| Tier 1 | RocksDB C API (`extern "C"`) | 跨版本稳定，无 mangling | 首选 uprobe 目标 |
-| Tier 2 | Rust 跨 crate 公开函数 | 每次编译 hash 后缀不同，需动态解析 | 自编译版本可用 |
-| Tier 3 | crate 内部/内联函数 | release 构建中通常被消除 | 不适合作为 uprobe 目标 |
+| Tier 1 | RocksDB C API (`extern "C"`) | 跨版本稳定，无 mangling / Stable across versions | 首选 uprobe 目标 / Primary uprobe targets |
+| Tier 2 | Rust 跨 crate 公开函数 / Rust cross-crate public functions | 每次编译 hash 后缀不同 / Hash suffix varies per build | 自编译版本可用 / Available in self-compiled builds |
+| Tier 3 | crate 内部/内联函数 / Crate-internal / inlined | release 构建中通常被消除 / Usually eliminated in release | 不适合 uprobe / Not suitable for uprobe |
 
-## 路线图
+## 路线图 / Roadmap
 
-- **Week 2**（已完成）：`ckb-probe symbols` 子命令，二进制符号侦察
+- **Week 2** (done): `ckb-probe symbols` subcommand — binary symbol reconnaissance
 
-## 许可证
+## 许可证 / License
 
 MIT OR Apache-2.0
