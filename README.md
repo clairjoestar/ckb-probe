@@ -160,8 +160,6 @@ ckb-probe/
 ## 路线图
 
 - **Week 2**（已完成）：`ckb-probe symbols` 子命令，二进制符号侦察
-- **Week 3**：eBPF 探针实现（rocksdb uprobe 延迟测量、kprobe 网络追踪、tracepoint 系统调用 Top-N）
-- **Week 4+**：实时仪表盘、告警、生产环境部署
 
 ## 许可证
 
