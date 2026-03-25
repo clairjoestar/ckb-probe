@@ -230,7 +230,7 @@ fn build_report(elf: &Elf, path: &Path, file_size: u64) -> Result<SymbolReport> 
         lookup
             .values()
             .flatten()
-            .filter(|s| s.demangled.contains(substr))
+            .filter(|s| is_direct_match(&s.demangled, substr))
             .collect()
     };
 
@@ -625,6 +625,71 @@ fn emit_terminal(report: &SymbolReport, args: &SymbolsArgs) -> Result<()> {
 }
 
 // ════════════════════════════════════════════════════════════════════
+// Symbol matching helpers
+// ════════════════════════════════════════════════════════════════════
+
+/// Compiler-generated symbol prefixes that should be excluded from Tier 2
+/// matching. These are generic instantiations (drop glue, vtable shims, etc.)
+/// that happen to contain the target path inside angle brackets.
+const NOISE_PREFIXES: &[&str] = &[
+    "core::ptr::drop_in_place<",
+    "<core::future::from_generator::GenFuture<",
+    "core::future::future::Future::poll<",
+    "<alloc::boxed::Box<",
+    "<core::pin::Pin<",
+];
+
+/// Check whether `demangled` is a direct match for `target_path`, not just a
+/// substring buried inside compiler-generated generic wrappers.
+///
+/// A direct match means the symbol's demangled name either:
+///   1. Starts with the target path (e.g. `Foo::bar` matches `Foo::bar::{{closure}}`), or
+///   2. Contains the target path but NOT inside `<...>` angle brackets (which
+///      indicate it's a generic type parameter, not the actual function).
+fn is_direct_match(demangled: &str, target_path: &str) -> bool {
+    // Fast path: no match at all
+    if !demangled.contains(target_path) {
+        return false;
+    }
+
+    // Reject known compiler-generated prefixes
+    for prefix in NOISE_PREFIXES {
+        if demangled.starts_with(prefix) {
+            return false;
+        }
+    }
+
+    // Accept if the symbol starts with the target path
+    if demangled.starts_with(target_path) {
+        return true;
+    }
+
+    // Otherwise, check that target_path appears at top-level scope (nesting
+    // depth 0), not inside angle brackets. This filters out cases like
+    // `Wrapper<Foo::bar>` while accepting `Foo::bar::{{closure}}`.
+    let mut depth: i32 = 0;
+    // Find all occurrences and check if any is at depth 0
+    let target_bytes = target_path.as_bytes();
+    let demangled_bytes = demangled.as_bytes();
+
+    for (i, &b) in demangled_bytes.iter().enumerate() {
+        match b {
+            b'<' => depth += 1,
+            b'>' => depth -= 1,
+            _ => {}
+        }
+        if depth == 0
+            && i + target_bytes.len() <= demangled_bytes.len()
+            && &demangled_bytes[i..i + target_bytes.len()] == target_bytes
+        {
+            return true;
+        }
+    }
+
+    false
+}
+
+// ════════════════════════════════════════════════════════════════════
 // Filtering helpers
 // ════════════════════════════════════════════════════════════════════
 
@@ -765,5 +830,46 @@ mod tests {
     fn filter_ci_works() {
         assert!(contains_ci("rocksdb_GET_pinned_cf", "get"));
         assert!(!contains_ci("rocksdb_put", "get"));
+    }
+
+    #[test]
+    fn direct_match_accepts_exact() {
+        assert!(is_direct_match(
+            "ckb_network::network::NetworkService::start",
+            "ckb_network::network::NetworkService::start"
+        ));
+    }
+
+    #[test]
+    fn direct_match_accepts_closure() {
+        assert!(is_direct_match(
+            "ckb_network::network::NetworkService::start::{{closure}}::{{closure}}",
+            "ckb_network::network::NetworkService::start"
+        ));
+    }
+
+    #[test]
+    fn direct_match_rejects_drop_in_place() {
+        assert!(!is_direct_match(
+            "core::ptr::drop_in_place<ckb_network::network::NetworkService::start<ckb_async_runtime::native::Handle>::{{closure}}>",
+            "ckb_network::network::NetworkService::start"
+        ));
+    }
+
+    #[test]
+    fn direct_match_rejects_nested_generic() {
+        assert!(!is_direct_match(
+            "core::ptr::drop_in_place<tokio::runtime::task::core::Cell<ckb_async_runtime::native::Handle::spawn<ckb_network::network::NetworkService::start<ckb_async_runtime::native::Handle>::{{closure}}>::{{closure}},alloc::sync::Arc<tokio::runtime::scheduler::multi_thread::handle::Handle>>>",
+            "ckb_network::network::NetworkService::start"
+        ));
+    }
+
+    #[test]
+    fn direct_match_accepts_with_generic_suffix() {
+        // The actual function with its own generic param should still match
+        assert!(is_direct_match(
+            "ckb_network::network::NetworkService::start<ckb_async_runtime::native::Handle>",
+            "ckb_network::network::NetworkService::start"
+        ));
     }
 }
