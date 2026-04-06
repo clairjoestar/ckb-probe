@@ -10,8 +10,10 @@ use std::path::PathBuf;
 ckb-probe uses eBPF (uprobe / kprobe / tracepoint) to deliver \
 application-semantic, real-time performance insights for CKB full nodes.\n\n\
 Quick start:\n  \
-ckb-probe symbols ./ckb          # analyse binary symbol availability\n  \
-ckb-probe symbols ./ckb --json   # machine-readable JSON output"
+ckb-probe check                            # environment check\n  \
+ckb-probe check --binary ./ckb --pid 1234  # + eBPF probe validation\n  \
+ckb-probe symbols ./ckb                    # analyse binary symbols\n  \
+ckb-probe symbols ./ckb --json             # machine-readable JSON"
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -20,11 +22,35 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
+    /// Check environment and validate eBPF probes.
+    ///
+    /// Verifies kernel version, BPF config, BTF support, permissions,
+    /// uprobe availability, CKB process, and binary symbols.
+    /// When --binary and --pid are both provided, also attaches
+    /// uprobe/kprobe/tracepoint probes to validate eBPF feasibility.
+    Check(CheckArgs),
+
     /// Analyse a CKB binary for uprobe-attachable symbols.
     ///
     /// Parses the ELF symbol table, detects RocksDB linkage method,
     /// and classifies every tracked function into Tier 1 / 2 / 3.
     Symbols(SymbolsArgs),
+}
+
+#[derive(clap::Args, Debug)]
+pub struct CheckArgs {
+    /// Path to the CKB binary (enables symbol check + eBPF validation).
+    #[arg(long, value_name = "CKB_BINARY")]
+    pub binary: Option<String>,
+
+    /// Target CKB process PID (enables eBPF probe validation).
+    /// Requires --binary.
+    #[arg(long)]
+    pub pid: Option<u32>,
+
+    /// Probe type for eBPF validation: uprobe, kprobe, tracepoint, all.
+    #[arg(long, default_value = "all")]
+    pub probe: String,
 }
 
 #[derive(clap::Args, Debug)]

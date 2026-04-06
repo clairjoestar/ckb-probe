@@ -2,7 +2,10 @@
 members = [
     "ckb-probe",
     "ckb-probe-common",
-    # "ckb-probe-ebpf",  # Week 3
+    "xtask",
+]
+exclude = [
+    "ckb-probe-ebpf",  # Built separately: cargo +nightly build --target bpfel-unknown-none -Z build-std=core
 ]
 resolver = "2"
 

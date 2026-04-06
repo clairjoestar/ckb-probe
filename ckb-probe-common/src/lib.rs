@@ -1,7 +1,67 @@
 //! ckb-probe-common: shared type definitions used by both the user-space
-//! control program and (in future) the BPF program via ckb-probe-ebpf.
+//! control program and the BPF program via ckb-probe-ebpf.
 
+#![cfg_attr(not(feature = "user"), no_std)]
+
+#[cfg(feature = "user")]
 use serde::{Deserialize, Serialize};
+
+// ────────────────────────────────────────────────────────────────────
+// eBPF shared types (used by both kernel-space and user-space)
+// ────────────────────────────────────────────────────────────────────
+
+/// Uprobe latency event — sent from BPF to userspace via PerfEventArray.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct UprobeLatencyEvent {
+    pub pid: u32,
+    pub tid: u32,
+    pub func_id: u32,
+    pub latency_ns: u64,
+    pub ts: u64,
+}
+
+/// TCP kprobe event.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct TcpEvent {
+    pub pid: u32,
+    pub tid: u32,
+    pub sport: u16,
+    pub dport: u16,
+    pub saddr: u32,
+    pub daddr: u32,
+    pub bytes: u32,
+    pub direction: u8, // 0 = send, 1 = recv
+    pub _pad: [u8; 3],
+    pub ts: u64,
+}
+
+/// Syscall tracepoint event.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct SyscallEvent {
+    pub pid: u32,
+    pub tid: u32,
+    pub syscall_nr: u64,
+    pub ts: u64,
+}
+
+/// RocksDB function identifier for uprobe demuxing.
+#[repr(u32)]
+#[derive(Clone, Copy)]
+pub enum RocksDbFunc {
+    GetPinnedCf = 1,
+    Put = 2,
+    Delete = 3,
+    Write = 4,
+    NewIteratorCf = 5,
+    MultiGetCf = 6,
+}
+
+// ════════════════════════════════════════════════════════════════════
+// Everything below requires std (userspace only)
+// ════════════════════════════════════════════════════════════════════
 
 // ────────────────────────────────────────────────────────────────────
 // Tier / Category enums
@@ -17,6 +77,7 @@ use serde::{Deserialize, Serialize};
 ///   hash suffix, so they must be resolved dynamically per binary.
 /// * **Tier3** – Crate-internal or inlined functions that are only visible in
 ///   debug builds. Not suitable as uprobe targets.
+#[cfg(feature = "user")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum SymbolTier {
     #[serde(rename = "tier1")]
@@ -27,6 +88,7 @@ pub enum SymbolTier {
     Tier3,
 }
 
+#[cfg(feature = "user")]
 impl std::fmt::Display for SymbolTier {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -38,6 +100,7 @@ impl std::fmt::Display for SymbolTier {
 }
 
 /// Functional category within the CKB architecture.
+#[cfg(feature = "user")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum SymbolCategory {
     #[serde(rename = "rocksdb_c_api")]
@@ -56,6 +119,7 @@ pub enum SymbolCategory {
     Other,
 }
 
+#[cfg(feature = "user")]
 impl std::fmt::Display for SymbolCategory {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -75,6 +139,7 @@ impl std::fmt::Display for SymbolCategory {
 // ────────────────────────────────────────────────────────────────────
 
 /// Information about a single symbol found during analysis.
+#[cfg(feature = "user")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SymbolInfo {
     /// Raw (mangled) name from the ELF symbol table.
@@ -101,6 +166,7 @@ pub struct SymbolInfo {
 // RocksDB linkage
 // ────────────────────────────────────────────────────────────────────
 
+#[cfg(feature = "user")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RocksdbLinkage {
     #[serde(rename = "static")]
@@ -111,6 +177,7 @@ pub enum RocksdbLinkage {
     Unknown,
 }
 
+#[cfg(feature = "user")]
 impl std::fmt::Display for RocksdbLinkage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -125,6 +192,7 @@ impl std::fmt::Display for RocksdbLinkage {
 // ELF section stats (for verbose output)
 // ────────────────────────────────────────────────────────────────────
 
+#[cfg(feature = "user")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ElfOverview {
     pub elf_class: String,
@@ -146,6 +214,7 @@ pub struct ElfOverview {
 // Complete report
 // ────────────────────────────────────────────────────────────────────
 
+#[cfg(feature = "user")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SymbolReport {
     pub binary_path: String,
@@ -161,6 +230,7 @@ pub struct SymbolReport {
 }
 
 /// A tracked symbol that was expected but NOT found in the binary.
+#[cfg(feature = "user")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrackedMissing {
     pub path: String,
@@ -169,6 +239,7 @@ pub struct TrackedMissing {
     pub reason: String,
 }
 
+#[cfg(feature = "user")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReportSummary {
     pub tier1_found: usize,
@@ -184,8 +255,10 @@ pub struct ReportSummary {
 // ────────────────────────────────────────────────────────────────────
 
 /// Static registry of known probe targets, grouped by tier.
+#[cfg(feature = "user")]
 pub struct ProbeTargets;
 
+#[cfg(feature = "user")]
 impl ProbeTargets {
     /// Tier 1: RocksDB C API functions (`extern "C"`, no mangling).
     pub fn tier1() -> Vec<Tier1Target> {
@@ -294,27 +367,32 @@ impl ProbeTargets {
 
 // ── helper constructors ──
 
+#[cfg(feature = "user")]
 pub struct Tier1Target {
     pub symbol: &'static str,
     pub description: &'static str,
 }
 
+#[cfg(feature = "user")]
 pub struct Tier2Target {
     pub rust_path: &'static str,
     pub description: &'static str,
     pub category: SymbolCategory,
 }
 
+#[cfg(feature = "user")]
 pub struct Tier3Target {
     pub rust_path: &'static str,
     pub description: &'static str,
     pub expected_reason: &'static str,
 }
 
+#[cfg(feature = "user")]
 fn t1(symbol: &'static str, description: &'static str) -> Tier1Target {
     Tier1Target { symbol, description }
 }
 
+#[cfg(feature = "user")]
 fn t2(
     rust_path: &'static str,
     description: &'static str,
@@ -323,6 +401,7 @@ fn t2(
     Tier2Target { rust_path, description, category }
 }
 
+#[cfg(feature = "user")]
 fn t3(
     rust_path: &'static str,
     description: &'static str,

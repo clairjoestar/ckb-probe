@@ -3,10 +3,24 @@ name = "ckb-probe-ebpf"
 version = "0.1.0"
 edition = "2021"
 
-# This crate will be built with:
+# Build with:
 #   cargo +nightly build --target bpfel-unknown-none -Z build-std=core
-# It cannot be part of the normal workspace build until Week 3.
+
+[[bin]]
+name = "ckb-probe-ebpf"
+path = "src/main.rs"
 
 [dependencies]
-# aya-bpf = { git = "https://github.com/aya-rs/aya", branch = "main" }
-# aya-log-ebpf = { git = "https://github.com/aya-rs/aya", branch = "main" }
+aya-ebpf = "0.1"
+aya-log-ebpf = "0.1"
+ckb-probe-common = { path = "../ckb-probe-common", default-features = false }
+
+[profile.dev]
+opt-level = 2
+overflow-checks = false
+debug = false
+panic = "abort"
+
+[profile.release]
+lto = true
+panic = "abort"
