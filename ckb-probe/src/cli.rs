@@ -35,6 +35,12 @@ pub enum Commands {
     /// Parses the ELF symbol table, detects RocksDB linkage method,
     /// and classifies every tracked function into Tier 1 / 2 / 3.
     Symbols(SymbolsArgs),
+
+    /// Monitor RocksDB operations on a live CKB node via eBPF.
+    ///
+    /// Attaches uprobe/uretprobe to 5 core RocksDB functions and
+    /// reports real-time QPS, latency percentiles, and slow operations.
+    Rocksdb(RocksdbArgs),
 }
 
 #[derive(clap::Args, Debug)]
@@ -74,4 +80,35 @@ pub struct SymbolsArgs {
     /// Only show a specific tier (1, 2, or 3).
     #[arg(long, value_name = "N", value_parser = clap::value_parser!(u8).range(1..=3))]
     pub tier: Option<u8>,
+}
+
+#[derive(clap::Args, Debug)]
+pub struct RocksdbArgs {
+    /// Path to the CKB binary.
+    #[arg(long, value_name = "CKB_BINARY")]
+    pub binary: String,
+
+    /// Target CKB process PID.
+    #[arg(long)]
+    pub pid: u32,
+
+    /// Show slow operations log instead of stats table.
+    #[arg(long)]
+    pub slow: bool,
+
+    /// Show latency distribution histogram.
+    #[arg(long)]
+    pub histogram: bool,
+
+    /// Output in JSON format.
+    #[arg(long)]
+    pub json: bool,
+
+    /// Slow operation threshold in microseconds.
+    #[arg(long, default_value = "1000", value_name = "μs")]
+    pub threshold: u64,
+
+    /// Stats refresh interval in seconds.
+    #[arg(long, default_value = "1", value_name = "SECS")]
+    pub interval: u64,
 }

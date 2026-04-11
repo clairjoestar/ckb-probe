@@ -13,5 +13,6 @@ async fn main() -> Result<()> {
     match cli.command {
         Commands::Check(args) => commands::check::run(args).await,
         Commands::Symbols(args) => commands::symbols::run(args),
+        Commands::Rocksdb(args) => commands::rocksdb::run(args).await,
     }
 }

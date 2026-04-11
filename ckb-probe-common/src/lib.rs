@@ -57,6 +57,44 @@ pub enum RocksDbFunc {
     Write = 4,
     NewIteratorCf = 5,
     MultiGetCf = 6,
+    TransactionPutCf = 7,
+    TransactionCommit = 8,
+}
+
+/// Maximum func_id + 1 (for array sizing).
+pub const MAX_FUNC_ID: u32 = 9;
+
+/// Number of log2 histogram buckets (covers 0 .. 2^63 ns).
+pub const HIST_BUCKETS: u32 = 64;
+
+/// Per-operation aggregated statistics (stored in PerCpuArray, one per func_id).
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct OpStats {
+    pub count: u64,
+    pub total_ns: u64,
+    pub min_ns: u64,
+    pub max_ns: u64,
+    /// Bytes processed by this operation (only populated where the BPF probe
+    /// can extract a size argument; 0 means "not tracked").
+    pub bytes_total: u64,
+}
+
+// Safety: OpStats is #[repr(C)] with only u64 fields, safe to read from raw bytes.
+#[cfg(feature = "user")]
+unsafe impl aya::Pod for OpStats {}
+
+/// Slow operation event — emitted when latency exceeds threshold.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct SlowEvent {
+    pub pid: u32,
+    pub tid: u32,
+    pub func_id: u32,
+    pub latency_ns: u64,
+    /// Operation size in bytes (0 if unknown for this op type).
+    pub size: u64,
+    pub ts: u64,
 }
 
 // ════════════════════════════════════════════════════════════════════
