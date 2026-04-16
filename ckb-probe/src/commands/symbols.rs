@@ -32,12 +32,9 @@ pub fn run(args: SymbolsArgs) -> Result<()> {
         bail!("file not found: {}", path.display());
     }
 
-    let buf = fs::read(path)
-        .with_context(|| format!("cannot read {}", path.display()))?;
+    let buf = fs::read(path).with_context(|| format!("cannot read {}", path.display()))?;
 
-    let elf = match goblin::Object::parse(&buf)
-        .with_context(|| "failed to parse ELF")?
-    {
+    let elf = match goblin::Object::parse(&buf).with_context(|| "failed to parse ELF")? {
         goblin::Object::Elf(e) => e,
         _ => bail!("not an ELF binary — ckb-probe requires a Linux ELF executable"),
     };
@@ -451,20 +448,14 @@ fn emit_terminal(report: &SymbolReport, args: &SymbolsArgs) -> Result<()> {
             );
             kv(
                 "Assessment",
-                &format!(
-                    "{}",
-                    "✅ Ideal — C API symbols embedded in binary".green()
-                ),
+                &format!("{}", "✅ Ideal — C API symbols embedded in binary".green()),
             );
         }
         RocksdbLinkage::Dynamic => {
             kv("Evidence", "librocksdb.so found in dynamic dependencies");
             kv(
                 "Assessment",
-                &format!(
-                    "{}",
-                    "✅ Symbols available in shared library".green()
-                ),
+                &format!("{}", "✅ Symbols available in shared library".green()),
             );
         }
         RocksdbLinkage::Unknown => {
@@ -501,17 +492,10 @@ fn emit_terminal(report: &SymbolReport, args: &SymbolsArgs) -> Result<()> {
             Color::Green,
         );
         if r.tier1.is_empty() {
-            println!(
-                "  {}",
-                "⚠️  No Tier 1 symbols found!".red().bold()
-            );
+            println!("  {}", "⚠️  No Tier 1 symbols found!".red().bold());
         } else {
             for s in &r.tier1 {
-                print!(
-                    "  {} {:<46} ",
-                    "✅".green(),
-                    s.raw_name,
-                );
+                print!("  {} {:<46} ", "✅".green(), s.raw_name,);
                 print!("{:#010x}", s.address);
                 println!("  ({} B)", s.size);
                 if args.verbose {
@@ -585,7 +569,11 @@ fn emit_terminal(report: &SymbolReport, args: &SymbolsArgs) -> Result<()> {
     // ── summary ────────────────────────────────────────────────────
     section("Summary");
     let pct = |n: usize, d: usize| -> usize {
-        if d == 0 { 0 } else { n * 100 / d }
+        if d == 0 {
+            0
+        } else {
+            n * 100 / d
+        }
     };
     println!(
         "  Tier 1:  {:>2} / {:<2}  ({:>3}%)  {}",
@@ -739,7 +727,11 @@ fn show_tier(args: &SymbolsArgs, tier: u8) -> bool {
 
 fn section(title: &str) {
     println!();
-    println!("── {} {}", title.bold(), "─".repeat(52usize.saturating_sub(title.len())));
+    println!(
+        "── {} {}",
+        title.bold(),
+        "─".repeat(52usize.saturating_sub(title.len()))
+    );
 }
 
 fn section_colored(title: &str, color: Color) {
@@ -816,8 +808,7 @@ mod tests {
     #[test]
     fn demangle_rust_symbol() {
         // a fabricated but structurally valid mangled name
-        let mangled =
-            "_ZN8ckb_sync12synchronizer12Synchronizer8received17h0123456789abcdefE";
+        let mangled = "_ZN8ckb_sync12synchronizer12Synchronizer8received17h0123456789abcdefE";
         let out = format!("{:#}", demangle(mangled));
         assert!(
             out.contains("ckb_sync::synchronizer::Synchronizer::received"),

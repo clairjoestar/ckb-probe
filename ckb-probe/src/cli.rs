@@ -45,14 +45,12 @@ pub enum Commands {
     /// When --binary and --pid are both provided, also attaches
     /// uprobe/kprobe/tracepoint probes to validate eBPF feasibility
     /// and collects 3 seconds of live events.
-    #[command(
-        after_help = "\
+    #[command(after_help = "\
 EXAMPLES:
     ckb-probe check                            # 8-point environment check
     ckb-probe check --binary ./ckb             # + symbol verification
     ckb-probe check --binary ./ckb --pid 1234  # + eBPF probe validation + live events
-    ckb-probe check --binary ./ckb --pid 1234 --probe uprobe  # uprobe only"
-    )]
+    ckb-probe check --binary ./ckb --pid 1234 --probe uprobe  # uprobe only")]
     Check(CheckArgs),
 
     /// Analyse a CKB binary for uprobe-attachable symbols.
@@ -61,15 +59,13 @@ EXAMPLES:
     /// (static vs dynamic), and classifies every tracked function
     /// into Tier 1 (C API, stable) / Tier 2 (Rust mangled) / Tier 3
     /// (inlined/LTO-eliminated).
-    #[command(
-        after_help = "\
+    #[command(after_help = "\
 EXAMPLES:
     ckb-probe symbols ./ckb                    # human-readable report
     ckb-probe symbols ./ckb --json             # machine-readable JSON
     ckb-probe symbols ./ckb --tier 1           # Tier 1 only
     ckb-probe symbols ./ckb --filter transaction  # filter by keyword
-    ckb-probe symbols ./ckb -v                 # verbose (addresses, sizes)"
-    )]
+    ckb-probe symbols ./ckb -v                 # verbose (addresses, sizes)")]
     Symbols(SymbolsArgs),
 
     /// Monitor RocksDB operations on a live CKB node via eBPF.
@@ -81,8 +77,7 @@ EXAMPLES:
     ///
     /// Four output modes: default table, --histogram, --slow, --json.
     /// Auto-reconnects if CKB process restarts (S-4).
-    #[command(
-        after_help = "\
+    #[command(after_help = "\
 EXAMPLES:
     # Default stats table (1s refresh)
     sudo ckb-probe rocksdb --binary ./ckb --pid 1234
@@ -102,8 +97,7 @@ EXAMPLES:
 EXIT CODES:
     0    Normal exit (Ctrl+C)
     1    Target process exited (S-4: will auto-reconnect if restarted)
-    2    Argument error"
-    )]
+    2    Argument error")]
     Rocksdb(RocksdbArgs),
 }
 
@@ -119,8 +113,12 @@ pub struct CheckArgs {
     pub pid: Option<u32>,
 
     /// Probe type for eBPF validation: uprobe, kprobe, tracepoint, all.
-    #[arg(long, default_value = "all", value_name = "TYPE",
-          help = "Probe type to validate [possible values: uprobe, kprobe, tracepoint, all]")]
+    #[arg(
+        long,
+        default_value = "all",
+        value_name = "TYPE",
+        help = "Probe type to validate [possible values: uprobe, kprobe, tracepoint, all]"
+    )]
     pub probe: String,
 }
 
@@ -139,7 +137,11 @@ pub struct SymbolsArgs {
     pub verbose: bool,
 
     /// Filter output by case-insensitive substring.
-    #[arg(long, value_name = "PATTERN", help = "Filter symbols by substring match")]
+    #[arg(
+        long,
+        value_name = "PATTERN",
+        help = "Filter symbols by substring match"
+    )]
     pub filter: Option<String>,
 
     /// Only show a specific tier (1, 2, or 3).
@@ -160,7 +162,10 @@ pub struct RocksdbArgs {
 
     /// Show slow operations log instead of stats table.
     /// Only operations exceeding --threshold are captured via RingBuf.
-    #[arg(long, help = "Slow operation capture mode (RingBuf, filtered by --threshold)")]
+    #[arg(
+        long,
+        help = "Slow operation capture mode (RingBuf, filtered by --threshold)"
+    )]
     pub slow: bool,
 
     /// Show latency distribution histogram (log2 buckets).

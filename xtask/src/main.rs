@@ -20,11 +20,7 @@ fn main() {
 
 fn build_ebpf() {
     let status = Command::new("cargo")
-        .current_dir(
-            std::env::current_dir()
-                .unwrap()
-                .join("ckb-probe-ebpf"),
-        )
+        .current_dir(std::env::current_dir().unwrap().join("ckb-probe-ebpf"))
         .args([
             "+nightly",
             "build",

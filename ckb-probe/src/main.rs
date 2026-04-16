@@ -16,7 +16,7 @@ async fn main() {
     };
 
     // Reset terminal on exit (clear alternate screen, show cursor)
-    eprint!("\x1B[?25h");  // show cursor (may be hidden by TUI)
+    eprint!("\x1B[?25h"); // show cursor (may be hidden by TUI)
 
     match result {
         Ok(()) => std::process::exit(0),

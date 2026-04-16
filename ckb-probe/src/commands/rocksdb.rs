@@ -19,23 +19,23 @@ const MONITOR_PROBES: &[(&str, &str, &str, u32, &str, bool)] = &[
         "rocksdb_get_pinned_cf_entry",
         "rocksdb_get_pinned_cf_return",
         "rocksdb_get_pinned_cf",
-        1,  // RocksDbFunc::GetPinnedCf
+        1, // RocksDbFunc::GetPinnedCf
         "GET",
-        true,  // value size read from returned PinnableSlice (offset 8)
+        true, // value size read from returned PinnableSlice (offset 8)
     ),
     (
         "rocksdb_transaction_put_cf_entry",
         "rocksdb_transaction_put_cf_return",
         "rocksdb_transaction_put_cf",
-        7,  // RocksDbFunc::TransactionPutCf
+        7, // RocksDbFunc::TransactionPutCf
         "PUT",
-        true,  // vlen extracted from arg(5) in entry probe
+        true, // vlen extracted from arg(5) in entry probe
     ),
     (
         "rocksdb_write_entry",
         "rocksdb_write_return",
         "rocksdb_write",
-        4,  // RocksDbFunc::Write
+        4, // RocksDbFunc::Write
         "WRITE",
         false, // WriteBatch payload size is internal to the batch object
     ),
@@ -43,7 +43,7 @@ const MONITOR_PROBES: &[(&str, &str, &str, u32, &str, bool)] = &[
         "rocksdb_create_iterator_cf_entry",
         "rocksdb_create_iterator_cf_return",
         "rocksdb_create_iterator_cf",
-        5,  // RocksDbFunc::NewIteratorCf
+        5, // RocksDbFunc::NewIteratorCf
         "ITER_NEW",
         false, // no payload
     ),
@@ -51,9 +51,9 @@ const MONITOR_PROBES: &[(&str, &str, &str, u32, &str, bool)] = &[
         "rocksdb_transaction_commit_entry",
         "rocksdb_transaction_commit_return",
         "rocksdb_transaction_commit",
-        8,  // RocksDbFunc::TransactionCommit
+        8, // RocksDbFunc::TransactionCommit
         "TXN_COMMIT",
-        true,  // sum of PUTs since last commit (per-tid accumulator)
+        true, // sum of PUTs since last commit (per-tid accumulator)
     ),
 ];
 
@@ -109,11 +109,11 @@ const RING_DEPTH: usize = 5;
 /// drifted high enough that nothing trips the relative thresholds.
 fn hard_p99_cap_us(func_id: u32) -> f64 {
     match func_id {
-        1 => 50_000.0,   // GET           — SSD cache miss should be < 5ms
-        4 => 50_000.0,   // WRITE         — write to memtable + WAL
-        5 => 5_000.0,    // ITER_NEW      — pure CPU/memory work
-        7 => 10_000.0,   // PUT (txn)     — in-memory WriteBatch append
-        8 => 100_000.0,  // TXN_COMMIT    — fsync-bound, allow generous headroom
+        1 => 50_000.0,  // GET           — SSD cache miss should be < 5ms
+        4 => 50_000.0,  // WRITE         — write to memtable + WAL
+        5 => 5_000.0,   // ITER_NEW      — pure CPU/memory work
+        7 => 10_000.0,  // PUT (txn)     — in-memory WriteBatch append
+        8 => 100_000.0, // TXN_COMMIT    — fsync-bound, allow generous headroom
         _ => f64::INFINITY,
     }
 }
@@ -203,8 +203,7 @@ impl AnomalyDetector {
                 continue;
             }
             self.baselines[id] = BASELINE_ALPHA * cur + (1.0 - BASELINE_ALPHA) * base;
-            self.baselines_p99[id] =
-                BASELINE_ALPHA * cur_p99 + (1.0 - BASELINE_ALPHA) * base_p99;
+            self.baselines_p99[id] = BASELINE_ALPHA * cur_p99 + (1.0 - BASELINE_ALPHA) * base_p99;
         }
         out
     }
@@ -455,8 +454,7 @@ async fn run_stats_loop(
                 .saturating_sub(prev_snapshots[id].total_ns);
             let mut delta_hist_1s = [0u64; 64];
             for i in 0..64 {
-                delta_hist_1s[i] =
-                    snapshots[id].hist[i].saturating_sub(prev_snapshots[id].hist[i]);
+                delta_hist_1s[i] = snapshots[id].hist[i].saturating_sub(prev_snapshots[id].hist[i]);
             }
 
             if dc_1s >= MIN_SAMPLES_FOR_1S {
@@ -470,11 +468,9 @@ async fn run_stats_loop(
                     cur_avg_us[id] = dn_w as f64 / dc_w as f64 / 1000.0;
                     let mut delta_hist_w = [0u64; 64];
                     for i in 0..64 {
-                        delta_hist_w[i] =
-                            snapshots[id].hist[i].saturating_sub(old[id].hist[i]);
+                        delta_hist_w[i] = snapshots[id].hist[i].saturating_sub(old[id].hist[i]);
                     }
-                    cur_p99_us[id] =
-                        percentile_from_hist(&delta_hist_w, 99.0) as f64 / 1000.0;
+                    cur_p99_us[id] = percentile_from_hist(&delta_hist_w, 99.0) as f64 / 1000.0;
                 }
             } else if dc_1s > 0 {
                 // Ring not yet full — use whatever 1s data we have
@@ -527,8 +523,7 @@ fn read_all_snapshots(bpf: &mut aya::Ebpf) -> Result<Vec<OpSnapshot>> {
     let mut snapshots = vec![OpSnapshot::default(); MAX_FUNC_ID as usize];
 
     // Read OP_STATS
-    let op_stats: PerCpuArray<_, OpStats> =
-        PerCpuArray::try_from(bpf.map("OP_STATS").unwrap())?;
+    let op_stats: PerCpuArray<_, OpStats> = PerCpuArray::try_from(bpf.map("OP_STATS").unwrap())?;
     for func_id in 0..MAX_FUNC_ID {
         if let Ok(per_cpu) = op_stats.get(&func_id, 0) {
             let s = &mut snapshots[func_id as usize];
@@ -541,8 +536,7 @@ fn read_all_snapshots(bpf: &mut aya::Ebpf) -> Result<Vec<OpSnapshot>> {
     }
 
     // Read LATENCY_HIST
-    let hist: PerCpuArray<_, u64> =
-        PerCpuArray::try_from(bpf.map("LATENCY_HIST").unwrap())?;
+    let hist: PerCpuArray<_, u64> = PerCpuArray::try_from(bpf.map("LATENCY_HIST").unwrap())?;
     for func_id in 0..MAX_FUNC_ID {
         for bucket in 0..HIST_BUCKETS {
             let idx = func_id * HIST_BUCKETS + bucket;
@@ -583,17 +577,16 @@ fn percentile_from_hist(hist: &[u64; 64], pct: f64) -> u64 {
 // Table rendering — fixed widths to match the main_proj.md spec
 // ────────────────────────────────────────────────────────────────
 
-const COL_OP: usize = 10;     // "GET       "
-const COL_QPS: usize = 5;     // "3,241"
-const COL_AVG: usize = 7;     // "    4.7"
-const COL_P50: usize = 7;     // "    3.2"
-const COL_P99: usize = 7;     // "   18.5"
-const COL_BYTES: usize = 13;  // "  1.2 MB/s  "
+const COL_OP: usize = 10; // "GET       "
+const COL_QPS: usize = 5; // "3,241"
+const COL_AVG: usize = 7; // "    4.7"
+const COL_P50: usize = 7; // "    3.2"
+const COL_P99: usize = 7; // "   18.5"
+const COL_BYTES: usize = 13; // "  1.2 MB/s  "
 
 /// Inside-border width = sum(content widths) + 5 inner `│` separators
 /// + 12 cell-padding spaces (1 left + 1 right per cell × 6 cells).
-const INSIDE_W: usize =
-    COL_OP + COL_QPS + COL_AVG + COL_P50 + COL_P99 + COL_BYTES + 5 + 12;
+const INSIDE_W: usize = COL_OP + COL_QPS + COL_AVG + COL_P50 + COL_P99 + COL_BYTES + 5 + 12;
 // 10 + 5 + 7 + 7 + 7 + 13 + 5 + 12 = 66
 
 fn print_table(
@@ -619,13 +612,7 @@ fn print_table(
     let right = pad - left;
     println!(
         "{}",
-        format!(
-            "╭{}{}{}╮",
-            "─".repeat(left),
-            title,
-            "─".repeat(right)
-        )
-        .bright_cyan()
+        format!("╭{}{}{}╮", "─".repeat(left), title, "─".repeat(right)).bright_cyan()
     );
 
     let sub = format!(
@@ -767,7 +754,11 @@ fn print_table(
             );
         }
         // Try to attribute the spike if WRITE P99 is also elevated.
-        if let Some(write_id) = attached.iter().find(|p| p.1 == "WRITE").map(|p| p.0 as usize) {
+        if let Some(write_id) = attached
+            .iter()
+            .find(|p| p.1 == "WRITE")
+            .map(|p| p.0 as usize)
+        {
             let mut delta_hist = [0u64; 64];
             for i in 0..64 {
                 delta_hist[i] = cur[write_id].hist[i].saturating_sub(prev[write_id].hist[i]);
@@ -795,11 +786,7 @@ fn print_table(
     }
 }
 
-fn print_histogram(
-    attached: &[(u32, &str, bool)],
-    cur: &[OpSnapshot],
-    prev: &[OpSnapshot],
-) {
+fn print_histogram(attached: &[(u32, &str, bool)], cur: &[OpSnapshot], prev: &[OpSnapshot]) {
     println!();
     for &(func_id, display, _) in attached {
         let id = func_id as usize;
@@ -951,9 +938,7 @@ async fn run_slow_mode(
                 // Drain all available events
                 while let Some(item) = ring.next() {
                     if item.len() >= std::mem::size_of::<SlowEvent>() {
-                        let event = unsafe {
-                            (item.as_ptr() as *const SlowEvent).read_unaligned()
-                        };
+                        let event = unsafe { (item.as_ptr() as *const SlowEvent).read_unaligned() };
                         let _ = txc.send(event);
                     }
                 }
@@ -1012,7 +997,7 @@ fn render_slow_table(
     print!("\x1B[2J\x1B[H");
 
     // Column widths
-    const W_TS: usize = 13;     // "  02:17:41.023 "
+    const W_TS: usize = 13; // "  02:17:41.023 "
     const W_OP: usize = 10;
     const W_LAT: usize = 9;
     const W_SIZE: usize = 8;

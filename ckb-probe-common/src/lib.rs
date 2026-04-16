@@ -301,104 +301,215 @@ impl ProbeTargets {
     /// Tier 1: RocksDB C API functions (`extern "C"`, no mangling).
     pub fn tier1() -> Vec<Tier1Target> {
         vec![
-            t1("rocksdb_get",                        "Generic point read"),
-            t1("rocksdb_get_cf",                     "Point read with Column Family"),
-            t1("rocksdb_get_pinned",                 "Pinned point read (zero-copy)"),
-            t1("rocksdb_get_pinned_cf",              "Pinned read with CF — CKB primary read path"),
-            t1("rocksdb_put",                        "Generic single write"),
-            t1("rocksdb_put_cf",                     "Single write with Column Family"),
-            t1("rocksdb_delete",                     "Generic single delete"),
-            t1("rocksdb_delete_cf",                  "Single delete with Column Family"),
-            t1("rocksdb_write",                      "WriteBatch atomic commit"),
-            t1("rocksdb_multi_get_cf",               "Multi-key batch read with CF"),
-            t1("rocksdb_transaction_put_cf",         "Transaction write with CF — CKB primary write path"),
-            t1("rocksdb_transaction_delete_cf",      "Transaction delete with CF"),
-            t1("rocksdb_transaction_get_cf",         "Transaction read with CF"),
-            t1("rocksdb_transaction_commit",         "Transaction commit"),
-            t1("rocksdb_optimistictransaction_begin", "Begin optimistic transaction"),
-            t1("rocksdb_create_iterator_cf",         "Create iterator with CF"),
-            t1("rocksdb_iter_seek",                  "Iterator seek to key"),
-            t1("rocksdb_iter_seek_to_first",         "Iterator seek to first entry"),
-            t1("rocksdb_iter_next",                  "Iterator advance"),
-            t1("rocksdb_iter_destroy",               "Destroy iterator"),
+            t1("rocksdb_get", "Generic point read"),
+            t1("rocksdb_get_cf", "Point read with Column Family"),
+            t1("rocksdb_get_pinned", "Pinned point read (zero-copy)"),
+            t1(
+                "rocksdb_get_pinned_cf",
+                "Pinned read with CF — CKB primary read path",
+            ),
+            t1("rocksdb_put", "Generic single write"),
+            t1("rocksdb_put_cf", "Single write with Column Family"),
+            t1("rocksdb_delete", "Generic single delete"),
+            t1("rocksdb_delete_cf", "Single delete with Column Family"),
+            t1("rocksdb_write", "WriteBatch atomic commit"),
+            t1("rocksdb_multi_get_cf", "Multi-key batch read with CF"),
+            t1(
+                "rocksdb_transaction_put_cf",
+                "Transaction write with CF — CKB primary write path",
+            ),
+            t1(
+                "rocksdb_transaction_delete_cf",
+                "Transaction delete with CF",
+            ),
+            t1("rocksdb_transaction_get_cf", "Transaction read with CF"),
+            t1("rocksdb_transaction_commit", "Transaction commit"),
+            t1(
+                "rocksdb_optimistictransaction_begin",
+                "Begin optimistic transaction",
+            ),
+            t1("rocksdb_create_iterator_cf", "Create iterator with CF"),
+            t1("rocksdb_iter_seek", "Iterator seek to key"),
+            t1("rocksdb_iter_seek_to_first", "Iterator seek to first entry"),
+            t1("rocksdb_iter_next", "Iterator advance"),
+            t1("rocksdb_iter_destroy", "Destroy iterator"),
         ]
     }
 
     /// Tier 2: Rust cross-crate public functions (mangled).
     pub fn tier2() -> Vec<Tier2Target> {
         vec![
-            t2("ckb_network::network::NetworkService::start",
-               "P2P service startup", SymbolCategory::P2pNetwork),
-            t2("ckb_network::protocols::CKBHandler::received",
-               "Protocol message received callback", SymbolCategory::P2pNetwork),
-            t2("tentacle::service::ServiceControl::send_message_to",
-               "Send message to a specific peer", SymbolCategory::P2pNetwork),
-            t2("tentacle::service::ServiceControl::disconnect",
-               "Disconnect a peer", SymbolCategory::P2pNetwork),
-            t2("ckb_sync::synchronizer::Synchronizer::received",
-               "Sync protocol message handler", SymbolCategory::Sync),
-            t2("ckb_sync::synchronizer::Synchronizer::try_process",
-               "Sync message dispatch", SymbolCategory::Sync),
-            t2("ckb_sync::relayer::Relayer::received",
-               "Relay protocol message handler", SymbolCategory::Sync),
-            t2("ckb_sync::synchronizer::headers_process::HeadersProcess::execute",
-               "Process received headers", SymbolCategory::Sync),
-            t2("ckb_sync::synchronizer::block_process::BlockProcess::execute",
-               "Process received block", SymbolCategory::Sync),
-            t2("ckb_sync::synchronizer::block_fetcher::BlockFetcher::fetch",
-               "Decide which blocks to fetch", SymbolCategory::Sync),
-            t2("ckb_sync::relayer::compact_block_process::CompactBlockProcess::execute",
-               "Process compact block relay", SymbolCategory::Sync),
-            t2("ckb_chain::chain_service::ChainService::process_block",
-               "Chain service block processing entry", SymbolCategory::ChainService),
-            t2("ckb_chain::chain_controller::ChainController::asynchronous_process_remote_block",
-               "Async remote block submission", SymbolCategory::ChainService),
-            t2("ckb_chain::verify::ConsumeUnverifiedBlocks::verify_block",
-               "Full contextual block verification", SymbolCategory::ChainService),
-            t2("ckb_store::db::ChainDB::get_block",
-               "High-level block retrieval", SymbolCategory::Storage),
-            t2("ckb_store::transaction::StoreTransaction::insert_block",
-               "Write raw block data to DB", SymbolCategory::Storage),
-            t2("ckb_store::transaction::StoreTransaction::attach_block",
-               "Build main-chain indexes for a block", SymbolCategory::Storage),
-            t2("ckb_store::transaction::StoreTransaction::commit",
-               "Atomic commit of store transaction", SymbolCategory::Storage),
-            t2("ckb_db::db::RocksDB::get_pinned",
-               "Low-level pinned read wrapper", SymbolCategory::Storage),
-            t2("ckb_freezer::freezer::Freezer::freeze",
-               "Migrate old blocks to cold storage", SymbolCategory::Storage),
-            t2("ckb_freezer::freezer::Freezer::retrieve",
-               "Read block from cold storage", SymbolCategory::Storage),
+            t2(
+                "ckb_network::network::NetworkService::start",
+                "P2P service startup",
+                SymbolCategory::P2pNetwork,
+            ),
+            t2(
+                "ckb_network::protocols::CKBHandler::received",
+                "Protocol message received callback",
+                SymbolCategory::P2pNetwork,
+            ),
+            t2(
+                "tentacle::service::ServiceControl::send_message_to",
+                "Send message to a specific peer",
+                SymbolCategory::P2pNetwork,
+            ),
+            t2(
+                "tentacle::service::ServiceControl::disconnect",
+                "Disconnect a peer",
+                SymbolCategory::P2pNetwork,
+            ),
+            t2(
+                "ckb_sync::synchronizer::Synchronizer::received",
+                "Sync protocol message handler",
+                SymbolCategory::Sync,
+            ),
+            t2(
+                "ckb_sync::synchronizer::Synchronizer::try_process",
+                "Sync message dispatch",
+                SymbolCategory::Sync,
+            ),
+            t2(
+                "ckb_sync::relayer::Relayer::received",
+                "Relay protocol message handler",
+                SymbolCategory::Sync,
+            ),
+            t2(
+                "ckb_sync::synchronizer::headers_process::HeadersProcess::execute",
+                "Process received headers",
+                SymbolCategory::Sync,
+            ),
+            t2(
+                "ckb_sync::synchronizer::block_process::BlockProcess::execute",
+                "Process received block",
+                SymbolCategory::Sync,
+            ),
+            t2(
+                "ckb_sync::synchronizer::block_fetcher::BlockFetcher::fetch",
+                "Decide which blocks to fetch",
+                SymbolCategory::Sync,
+            ),
+            t2(
+                "ckb_sync::relayer::compact_block_process::CompactBlockProcess::execute",
+                "Process compact block relay",
+                SymbolCategory::Sync,
+            ),
+            t2(
+                "ckb_chain::chain_service::ChainService::process_block",
+                "Chain service block processing entry",
+                SymbolCategory::ChainService,
+            ),
+            t2(
+                "ckb_chain::chain_controller::ChainController::asynchronous_process_remote_block",
+                "Async remote block submission",
+                SymbolCategory::ChainService,
+            ),
+            t2(
+                "ckb_chain::verify::ConsumeUnverifiedBlocks::verify_block",
+                "Full contextual block verification",
+                SymbolCategory::ChainService,
+            ),
+            t2(
+                "ckb_store::db::ChainDB::get_block",
+                "High-level block retrieval",
+                SymbolCategory::Storage,
+            ),
+            t2(
+                "ckb_store::transaction::StoreTransaction::insert_block",
+                "Write raw block data to DB",
+                SymbolCategory::Storage,
+            ),
+            t2(
+                "ckb_store::transaction::StoreTransaction::attach_block",
+                "Build main-chain indexes for a block",
+                SymbolCategory::Storage,
+            ),
+            t2(
+                "ckb_store::transaction::StoreTransaction::commit",
+                "Atomic commit of store transaction",
+                SymbolCategory::Storage,
+            ),
+            t2(
+                "ckb_db::db::RocksDB::get_pinned",
+                "Low-level pinned read wrapper",
+                SymbolCategory::Storage,
+            ),
+            t2(
+                "ckb_freezer::freezer::Freezer::freeze",
+                "Migrate old blocks to cold storage",
+                SymbolCategory::Storage,
+            ),
+            t2(
+                "ckb_freezer::freezer::Freezer::retrieve",
+                "Read block from cold storage",
+                SymbolCategory::Storage,
+            ),
         ]
     }
 
     /// Tier 3: Functions expected to be absent in release builds.
     pub fn tier3_expected_missing() -> Vec<Tier3Target> {
         vec![
-            t3("ckb_network::compress::compress",
-               "Snappy compression", "inlined in release"),
-            t3("ckb_network::compress::decompress",
-               "Snappy decompression", "inlined in release"),
-            t3("ckb_store::cache::StoreCache::get_header",
-               "LRU cache header read", "inlined in release"),
-            t3("ckb_sync::types::SyncShared::insert_new_block",
-               "Crate-internal helper", "inlined in release"),
-            t3("ckb_sync::types::SyncShared::is_initial_block_download",
-               "IBD check flag", "inlined in release"),
-            t3("ckb_chain::utils::orphan_block_pool::OrphanBlockPool::insert",
-               "Orphan pool insert", "crate-internal"),
-            t3("ckb_chain::utils::orphan_block_pool::OrphanBlockPool::search_orphan_leader",
-               "Orphan pool search", "crate-internal"),
-            t3("ckb_network::peer_registry::PeerRegistry::accept",
-               "Accept inbound peer", "may be inlined in official release"),
-            t3("ckb_network::peer_registry::PeerRegistry::try_outbound_peer",
-               "Attempt outbound connection", "may be inlined"),
-            t3("ckb_network::peer_registry::PeerRegistry::remove",
-               "Remove peer from registry", "may be inlined"),
-            t3("tentacle::service::ServiceControl::filter_broadcast",
-               "Filtered broadcast helper", "may be inlined in official release"),
-            t3("ckb_store::db::ChainDB::get_block_header",
-               "Block header retrieval", "may be inlined"),
+            t3(
+                "ckb_network::compress::compress",
+                "Snappy compression",
+                "inlined in release",
+            ),
+            t3(
+                "ckb_network::compress::decompress",
+                "Snappy decompression",
+                "inlined in release",
+            ),
+            t3(
+                "ckb_store::cache::StoreCache::get_header",
+                "LRU cache header read",
+                "inlined in release",
+            ),
+            t3(
+                "ckb_sync::types::SyncShared::insert_new_block",
+                "Crate-internal helper",
+                "inlined in release",
+            ),
+            t3(
+                "ckb_sync::types::SyncShared::is_initial_block_download",
+                "IBD check flag",
+                "inlined in release",
+            ),
+            t3(
+                "ckb_chain::utils::orphan_block_pool::OrphanBlockPool::insert",
+                "Orphan pool insert",
+                "crate-internal",
+            ),
+            t3(
+                "ckb_chain::utils::orphan_block_pool::OrphanBlockPool::search_orphan_leader",
+                "Orphan pool search",
+                "crate-internal",
+            ),
+            t3(
+                "ckb_network::peer_registry::PeerRegistry::accept",
+                "Accept inbound peer",
+                "may be inlined in official release",
+            ),
+            t3(
+                "ckb_network::peer_registry::PeerRegistry::try_outbound_peer",
+                "Attempt outbound connection",
+                "may be inlined",
+            ),
+            t3(
+                "ckb_network::peer_registry::PeerRegistry::remove",
+                "Remove peer from registry",
+                "may be inlined",
+            ),
+            t3(
+                "tentacle::service::ServiceControl::filter_broadcast",
+                "Filtered broadcast helper",
+                "may be inlined in official release",
+            ),
+            t3(
+                "ckb_store::db::ChainDB::get_block_header",
+                "Block header retrieval",
+                "may be inlined",
+            ),
         ]
     }
 }
@@ -427,16 +538,19 @@ pub struct Tier3Target {
 
 #[cfg(feature = "user")]
 fn t1(symbol: &'static str, description: &'static str) -> Tier1Target {
-    Tier1Target { symbol, description }
+    Tier1Target {
+        symbol,
+        description,
+    }
 }
 
 #[cfg(feature = "user")]
-fn t2(
-    rust_path: &'static str,
-    description: &'static str,
-    category: SymbolCategory,
-) -> Tier2Target {
-    Tier2Target { rust_path, description, category }
+fn t2(rust_path: &'static str, description: &'static str, category: SymbolCategory) -> Tier2Target {
+    Tier2Target {
+        rust_path,
+        description,
+        category,
+    }
 }
 
 #[cfg(feature = "user")]
@@ -445,5 +559,9 @@ fn t3(
     description: &'static str,
     expected_reason: &'static str,
 ) -> Tier3Target {
-    Tier3Target { rust_path, description, expected_reason }
+    Tier3Target {
+        rust_path,
+        description,
+        expected_reason,
+    }
 }

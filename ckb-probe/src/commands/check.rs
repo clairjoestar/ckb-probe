@@ -2,8 +2,8 @@ use anyhow::Result;
 use aya::maps::AsyncPerfEventArray;
 use aya::util::online_cpus;
 use bytes::BytesMut;
-use colored::Colorize;
 use ckb_probe_common::{SyscallEvent, TcpEvent, UprobeLatencyEvent};
+use colored::Colorize;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
@@ -51,14 +51,12 @@ fn print_results(title: &str, results: &[CheckResult]) {
     println!();
     println!(
         "{}",
-        "╔══════════════════════════════════════════════════════════════╗"
-            .bright_cyan()
+        "╔══════════════════════════════════════════════════════════════╗".bright_cyan()
     );
     println!("{}", format!("║{}║", title_line).bright_cyan());
     println!(
         "{}",
-        "╠══════════════════════════════════════════════════════════════╣"
-            .bright_cyan()
+        "╠══════════════════════════════════════════════════════════════╣".bright_cyan()
     );
     for r in results {
         let icon = if r.passed { "✅" } else { "❌" };
@@ -72,8 +70,7 @@ fn print_results(title: &str, results: &[CheckResult]) {
     }
     println!(
         "{}",
-        "╚══════════════════════════════════════════════════════════════╝"
-            .bright_cyan()
+        "╚══════════════════════════════════════════════════════════════╝".bright_cyan()
     );
 
     let passed = results.iter().filter(|r| r.passed).count();
@@ -96,21 +93,14 @@ fn print_results(title: &str, results: &[CheckResult]) {
 // eBPF probe validation
 // ════════════════════════════════════════════════════════════════
 
-async fn run_ebpf_validation(
-    binary: &str,
-    pid: u32,
-    probe_type: &str,
-) -> Result<Vec<CheckResult>> {
+async fn run_ebpf_validation(binary: &str, pid: u32, probe_type: &str) -> Result<Vec<CheckResult>> {
     let ebpf_path =
         std::path::Path::new("ckb-probe-ebpf/target/bpfel-unknown-none/release/ckb-probe-ebpf");
     if !ebpf_path.exists() {
         return Ok(vec![CheckResult {
             name: "eBPF binary".into(),
             passed: false,
-            detail: format!(
-                "not found at {:?}. Run: cargo xtask build-ebpf",
-                ebpf_path
-            ),
+            detail: format!("not found at {:?}. Run: cargo xtask build-ebpf", ebpf_path),
         }]);
     }
 
@@ -175,8 +165,7 @@ async fn collect_live_events(bpf: &mut aya::Ebpf, probe_type: &str) -> Result<()
     // uprobe events
     if matches!(probe_type, "uprobe" | "all") {
         if let Some(map) = bpf.take_map("UPROBE_EVENTS") {
-            let mut perf_array: AsyncPerfEventArray<_> =
-                AsyncPerfEventArray::try_from(map)?;
+            let mut perf_array: AsyncPerfEventArray<_> = AsyncPerfEventArray::try_from(map)?;
             for cpu_id in &cpus {
                 let mut buf = perf_array.open(*cpu_id, Some(256))?;
                 let count = uprobe_count.clone();
@@ -189,7 +178,8 @@ async fn collect_live_events(bpf: &mut aya::Ebpf, probe_type: &str) -> Result<()
                             for i in 0..events.read {
                                 if buffers[i].len() >= std::mem::size_of::<UprobeLatencyEvent>() {
                                     let event = unsafe {
-                                        (buffers[i].as_ptr() as *const UprobeLatencyEvent).read_unaligned()
+                                        (buffers[i].as_ptr() as *const UprobeLatencyEvent)
+                                            .read_unaligned()
                                     };
                                     let func_name = func_id_to_name(event.func_id);
                                     let latency_us = event.latency_ns as f64 / 1000.0;
@@ -216,8 +206,7 @@ async fn collect_live_events(bpf: &mut aya::Ebpf, probe_type: &str) -> Result<()
     // tcp events
     if matches!(probe_type, "kprobe" | "all") {
         if let Some(map) = bpf.take_map("TCP_EVENTS") {
-            let mut perf_array: AsyncPerfEventArray<_> =
-                AsyncPerfEventArray::try_from(map)?;
+            let mut perf_array: AsyncPerfEventArray<_> = AsyncPerfEventArray::try_from(map)?;
             for cpu_id in &cpus {
                 let mut buf = perf_array.open(*cpu_id, Some(256))?;
                 let count = tcp_count.clone();
@@ -256,8 +245,7 @@ async fn collect_live_events(bpf: &mut aya::Ebpf, probe_type: &str) -> Result<()
     // syscall events
     if matches!(probe_type, "tracepoint" | "all") {
         if let Some(map) = bpf.take_map("SYSCALL_EVENTS") {
-            let mut perf_array: AsyncPerfEventArray<_> =
-                AsyncPerfEventArray::try_from(map)?;
+            let mut perf_array: AsyncPerfEventArray<_> = AsyncPerfEventArray::try_from(map)?;
             for cpu_id in &cpus {
                 let mut buf = perf_array.open(*cpu_id, Some(256))?;
                 let count = syscall_count.clone();
@@ -270,7 +258,8 @@ async fn collect_live_events(bpf: &mut aya::Ebpf, probe_type: &str) -> Result<()
                             for i in 0..events.read {
                                 if buffers[i].len() >= std::mem::size_of::<SyscallEvent>() {
                                     let event = unsafe {
-                                        (buffers[i].as_ptr() as *const SyscallEvent).read_unaligned()
+                                        (buffers[i].as_ptr() as *const SyscallEvent)
+                                            .read_unaligned()
                                     };
                                     let name = syscall_nr_to_name(event.syscall_nr);
                                     let prev = count.fetch_add(1, Ordering::Relaxed);
@@ -348,11 +337,7 @@ fn syscall_nr_to_name(nr: u64) -> &'static str {
     }
 }
 
-fn validate_uprobe(
-    bpf: &mut aya::Ebpf,
-    binary: &str,
-    pid: u32,
-) -> Result<Vec<CheckResult>> {
+fn validate_uprobe(bpf: &mut aya::Ebpf, binary: &str, pid: u32) -> Result<Vec<CheckResult>> {
     use aya::programs::UProbe;
 
     let mut target_pid: aya::maps::HashMap<_, u32, u8> =
@@ -361,12 +346,32 @@ fn validate_uprobe(
 
     // BPF program pairs defined in ckb-probe-ebpf (have entry/return BPF functions)
     const BPF_PROBES: &[(&str, &str, &str)] = &[
-        ("rocksdb_get_pinned_cf_entry", "rocksdb_get_pinned_cf_return", "rocksdb_get_pinned_cf"),
+        (
+            "rocksdb_get_pinned_cf_entry",
+            "rocksdb_get_pinned_cf_return",
+            "rocksdb_get_pinned_cf",
+        ),
         ("rocksdb_put_entry", "rocksdb_put_return", "rocksdb_put"),
-        ("rocksdb_write_entry", "rocksdb_write_return", "rocksdb_write"),
-        ("rocksdb_delete_entry", "rocksdb_delete_return", "rocksdb_delete"),
-        ("rocksdb_create_iterator_cf_entry", "rocksdb_create_iterator_cf_return", "rocksdb_create_iterator_cf"),
-        ("rocksdb_multi_get_cf_entry", "rocksdb_multi_get_cf_return", "rocksdb_multi_get_cf"),
+        (
+            "rocksdb_write_entry",
+            "rocksdb_write_return",
+            "rocksdb_write",
+        ),
+        (
+            "rocksdb_delete_entry",
+            "rocksdb_delete_return",
+            "rocksdb_delete",
+        ),
+        (
+            "rocksdb_create_iterator_cf_entry",
+            "rocksdb_create_iterator_cf_return",
+            "rocksdb_create_iterator_cf",
+        ),
+        (
+            "rocksdb_multi_get_cf_entry",
+            "rocksdb_multi_get_cf_return",
+            "rocksdb_multi_get_cf",
+        ),
     ];
 
     // All Tier 1 symbols — used for uprobe-attachability test
@@ -488,14 +493,14 @@ fn resolve_symbol_offset(binary: &str, symbol: &str) -> bool {
     elf.syms.iter().any(|sym| {
         sym.st_type() == goblin::elf::sym::STT_FUNC
             && sym.st_value != 0
-            && elf.strtab.get_at(sym.st_name).map_or(false, |name| name == symbol)
+            && elf
+                .strtab
+                .get_at(sym.st_name)
+                .map_or(false, |name| name == symbol)
     })
 }
 
-fn validate_kprobe(
-    bpf: &mut aya::Ebpf,
-    pid: u32,
-) -> Result<Vec<CheckResult>> {
+fn validate_kprobe(bpf: &mut aya::Ebpf, pid: u32) -> Result<Vec<CheckResult>> {
     use aya::programs::KProbe;
 
     let mut target_pid: aya::maps::HashMap<_, u32, u8> =
@@ -528,10 +533,7 @@ fn validate_kprobe(
     Ok(results)
 }
 
-fn validate_tracepoint(
-    bpf: &mut aya::Ebpf,
-    pid: u32,
-) -> Result<Vec<CheckResult>> {
+fn validate_tracepoint(bpf: &mut aya::Ebpf, pid: u32) -> Result<Vec<CheckResult>> {
     use aya::programs::TracePoint;
 
     let mut target_pid: aya::maps::HashMap<_, u32, u8> =
@@ -669,14 +671,7 @@ fn check_permissions() -> CheckResult {
 }
 
 fn check_bpf_syscall() -> CheckResult {
-    let ret = unsafe {
-        libc::syscall(
-            libc::SYS_bpf,
-            0u32,
-            core::ptr::null::<u8>(),
-            0u32,
-        )
-    };
+    let ret = unsafe { libc::syscall(libc::SYS_bpf, 0u32, core::ptr::null::<u8>(), 0u32) };
     let _ = ret;
     let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
 
@@ -725,11 +720,7 @@ fn check_ckb_process() -> CheckResult {
             CheckResult {
                 name: "CKB process".into(),
                 passed: true,
-                detail: format!(
-                    "{} instance(s), pid={}",
-                    count,
-                    pids.replace('\n', ",")
-                ),
+                detail: format!("{} instance(s), pid={}", count, pids.replace('\n', ",")),
             }
         }
         _ => CheckResult {
@@ -749,11 +740,7 @@ fn check_ckb_symbols(binary_path: &str) -> CheckResult {
         };
     }
 
-    let key_symbols = [
-        "rocksdb_get_pinned_cf",
-        "rocksdb_put",
-        "rocksdb_delete",
-    ];
+    let key_symbols = ["rocksdb_get_pinned_cf", "rocksdb_put", "rocksdb_delete"];
 
     for nm_args in &[
         vec!["-D", "--defined-only", binary_path],
