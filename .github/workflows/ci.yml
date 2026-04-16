@@ -128,6 +128,9 @@ jobs:
     name: CKB Compatibility
     runs-on: ubuntu-latest
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: read
+      issues: write
     steps:
       - uses: actions/checkout@v4
 
@@ -222,11 +225,15 @@ jobs:
       - name: Verify 5 core probe targets
         run: |
           CKB_TAG="${{ steps.ckb-release.outputs.ckb_tag }}"
+          # Cache the JSON once so we don't re-run symbols analysis 5 times.
+          ./target/release/ckb-probe symbols ./ckb-test-binary --json > /tmp/symbols.json
           MISSING=0
           for sym in rocksdb_get_pinned_cf rocksdb_transaction_put_cf rocksdb_write \
                      rocksdb_create_iterator_cf rocksdb_transaction_commit; do
-            if ./target/release/ckb-probe symbols ./ckb-test-binary --json | \
-               jq -e ".tier1[] | select(.symbol == \"$sym\")" > /dev/null 2>&1; then
+            # JSON schema (ckb-probe-common::SymbolInfo) exposes the symbol
+            # name under `raw_name` (demangled name == raw name for C symbols).
+            if jq -e --arg s "$sym" '.tier1[] | select(.raw_name == $s)' \
+                 /tmp/symbols.json > /dev/null 2>&1; then
               echo "  ✅ $sym"
             else
               echo "  ❌ $sym MISSING in CKB $CKB_TAG"
