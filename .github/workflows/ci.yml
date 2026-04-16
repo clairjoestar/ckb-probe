@@ -8,6 +8,13 @@ on:
   # Weekly CKB compatibility check (every Monday 08:00 UTC)
   schedule:
     - cron: '0 8 * * 1'
+  # Manual trigger for the CKB compatibility (symbol analysis) job
+  workflow_dispatch:
+    inputs:
+      ckb_tag:
+        description: 'CKB release tag to analyse (leave empty for latest)'
+        required: false
+        default: ''
 
 env:
   CARGO_TERM_COLOR: always
@@ -148,11 +155,22 @@ jobs:
 
       - name: Fetch latest CKB release from GitHub
         id: ckb-release
+        env:
+          INPUT_TAG: ${{ github.event.inputs.ckb_tag }}
         run: |
-          echo "Fetching latest release from nervosnetwork/ckb..."
-          RELEASE_JSON=$(curl -sL https://api.github.com/repos/nervosnetwork/ckb/releases/latest)
+          if [ -n "$INPUT_TAG" ]; then
+            echo "Fetching user-specified CKB release: $INPUT_TAG"
+            RELEASE_JSON=$(curl -sL "https://api.github.com/repos/nervosnetwork/ckb/releases/tags/$INPUT_TAG")
+          else
+            echo "Fetching latest release from nervosnetwork/ckb..."
+            RELEASE_JSON=$(curl -sL https://api.github.com/repos/nervosnetwork/ckb/releases/latest)
+          fi
           CKB_TAG=$(echo "$RELEASE_JSON" | jq -r '.tag_name')
-          echo "Latest CKB release: $CKB_TAG"
+          if [ -z "$CKB_TAG" ] || [ "$CKB_TAG" = "null" ]; then
+            echo "::error::Could not resolve CKB release (input='$INPUT_TAG')"
+            exit 1
+          fi
+          echo "Resolved CKB release: $CKB_TAG"
           echo "ckb_tag=$CKB_TAG" >> "$GITHUB_OUTPUT"
 
           # Find the x86_64-unknown-linux-gnu tarball
