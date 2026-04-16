@@ -1,0 +1,71 @@
+════════════════════════════════════════════════════════════════════════════════
+  ckb-probe rocksdb · 4-hour P-1 ~ P-4 performance overhead report
+  Generated: 2026-04-11 14:49:12
+════════════════════════════════════════════════════════════════════════════════
+
+Test setup
+  target CKB pid     : 3310428  (/root/ckb)
+  CKB JSON-RPC       : http://127.0.0.1:8124
+  probe binary       : /root/ckb-probe/target/release/ckb-probe
+  probe args         : rocksdb --slow --threshold 1 --interval 5
+  phase A duration   : 7200s with ckb-probe attached
+  phase B duration   : 7200s baseline (no probe)
+  CPU sample rate    : every 5s (1440 samples per phase)
+  RSS sample rate    : every 5s
+  P-4 sample rate    : every 60s × 120 samples per phase (= 7200s)
+  Per main_proj.md   : testnet only, never mainnet
+
+────────────────────────────────────────────────────────────────────────────────
+  P-1   附加 CPU 使用率 ≤ 3% (1h window)
+────────────────────────────────────────────────────────────────────────────────
+  baseline %CPU mean (1h)   : 110.7522   (n=720 samples)
+  with-probe %CPU mean (1h) : 111.5057   (n=720 samples)
+  delta (with - baseline)   : +0.7535
+  P-1 budget                : ≤ +3.0
+  status                    : ✅ PASS
+
+  (full 2h reference: baseline=110.4617  with-probe=111.3512  delta=+0.8895)
+
+────────────────────────────────────────────────────────────────────────────────
+  P-2   ckb-probe RSS ≤ 50 MB (持续监控状态, 2h)
+────────────────────────────────────────────────────────────────────────────────
+  samples                   : 1436
+  mean VmRSS                : 87.8541 MB    (sustained — what P-2 measures)
+  max  VmRSS                : 105.5117 MB    (sustained — what P-2 measures)
+  peak VmHWM                : 105.5117 MB    (one-shot — info only, BPF map setup)
+  P-2 budget                : ≤ 50 MB sustained
+  status                    : ❌ FAIL
+
+────────────────────────────────────────────────────────────────────────────────
+  P-3   BPF 事件丢失率 < 0.1% (10K events/sec sustained per spec)
+────────────────────────────────────────────────────────────────────────────────
+  total events attempted    : 4503894
+  events lost               : 0
+  loss rate                 : 0.0000%
+  achieved event rate       : 626 events/sec  (over 7200s)
+  P-3 budget                : < 0.1% loss
+  status                    : ✅ PASS
+  caveat                    : 实测速率 626/s < spec 目标 10000/s,
+                              因为同步到 tip 后稳态 RocksDB 操作密度有限.
+                              要触达 10K/s 需要 IBD 阶段或 RPC 风暴.
+
+────────────────────────────────────────────────────────────────────────────────
+  P-4   CKB 同步速度退化 < 1% (2h IBD window)
+────────────────────────────────────────────────────────────────────────────────
+  baseline blocks/min       : 7.6102   (906 blocks over 119.05 min)
+  with-probe blocks/min     : 7.1147   (847 blocks over 119.05 min)
+  degradation               : +6.5110%
+  P-4 budget                : < 1.0% degradation
+  status                    : ❌ FAIL
+  caveat                    : 节点已接近 tip,非真正 IBD 阶段;
+                              spec 的 IBD 窗口要从 snapshot 启动才能严格复现.
+
+════════════════════════════════════════════════════════════════════════════════
+  raw data files (in /tmp/perf-run):
+    /tmp/perf-run/p1-with-probe.log     (1443 lines)
+    /tmp/perf-run/p1-baseline.log     (1443 lines)
+    /tmp/perf-run/p2-rss.log        (1436 lines)
+    /tmp/perf-run/probe-slow.log     (20199 lines)
+    /tmp/perf-run/p4-with-probe.log     (121 lines)
+    /tmp/perf-run/p4-baseline.log     (121 lines)
+════════════════════════════════════════════════════════════════════════════════
