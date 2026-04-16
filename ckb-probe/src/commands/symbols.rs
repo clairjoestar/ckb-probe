@@ -718,7 +718,7 @@ fn contains_ci(haystack: &str, needle_lower: &str) -> bool {
 }
 
 fn show_tier(args: &SymbolsArgs, tier: u8) -> bool {
-    args.tier.map_or(true, |t| t == tier)
+    args.tier.is_none_or(|t| t == tier)
 }
 
 // ════════════════════════════════════════════════════════════════════

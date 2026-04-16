@@ -18,16 +18,16 @@ pub struct CheckResult {
 }
 
 pub async fn run(args: CheckArgs) -> Result<()> {
-    let mut results = Vec::new();
-
     // ── Environment checks ──
-    results.push(check_kernel_version());
-    results.push(check_bpf_config());
-    results.push(check_btf());
-    results.push(check_permissions());
-    results.push(check_bpf_syscall());
-    results.push(check_uprobe_support());
-    results.push(check_ckb_process());
+    let mut results = vec![
+        check_kernel_version(),
+        check_bpf_config(),
+        check_btf(),
+        check_permissions(),
+        check_bpf_syscall(),
+        check_uprobe_support(),
+        check_ckb_process(),
+    ];
 
     if let Some(ref bin) = args.binary {
         results.push(check_ckb_symbols(bin));
@@ -83,9 +83,9 @@ fn print_results(title: &str, results: &[CheckResult]) {
     );
 
     if passed == total {
-        println!("  {} All checks passed!", "🎉");
+        println!("  🎉 All checks passed!");
     } else {
-        println!("  {} Some checks failed. See details above.", "⚠️");
+        println!("  ⚠️ Some checks failed. See details above.");
     }
 }
 
@@ -136,10 +136,7 @@ async fn run_ebpf_validation(binary: &str, pid: u32, probe_type: &str) -> Result
 
     // ── Live event collection (3 seconds) ──
     println!();
-    println!(
-        "  {} Collecting live events for 3 seconds...",
-        "⏳".to_string()
-    );
+    println!("  ⏳ Collecting live events for 3 seconds...");
     println!();
 
     collect_live_events(&mut bpf, probe_type).await?;
@@ -175,10 +172,10 @@ async fn collect_live_events(bpf: &mut aya::Ebpf, probe_type: &str) -> Result<()
                         .collect::<Vec<_>>();
                     loop {
                         if let Ok(events) = buf.read_events(&mut buffers).await {
-                            for i in 0..events.read {
-                                if buffers[i].len() >= std::mem::size_of::<UprobeLatencyEvent>() {
+                            for buffer in buffers.iter().take(events.read) {
+                                if buffer.len() >= std::mem::size_of::<UprobeLatencyEvent>() {
                                     let event = unsafe {
-                                        (buffers[i].as_ptr() as *const UprobeLatencyEvent)
+                                        (buffer.as_ptr() as *const UprobeLatencyEvent)
                                             .read_unaligned()
                                     };
                                     let func_name = func_id_to_name(event.func_id);
@@ -216,10 +213,10 @@ async fn collect_live_events(bpf: &mut aya::Ebpf, probe_type: &str) -> Result<()
                         .collect::<Vec<_>>();
                     loop {
                         if let Ok(events) = buf.read_events(&mut buffers).await {
-                            for i in 0..events.read {
-                                if buffers[i].len() >= std::mem::size_of::<TcpEvent>() {
+                            for buffer in buffers.iter().take(events.read) {
+                                if buffer.len() >= std::mem::size_of::<TcpEvent>() {
                                     let event = unsafe {
-                                        (buffers[i].as_ptr() as *const TcpEvent).read_unaligned()
+                                        (buffer.as_ptr() as *const TcpEvent).read_unaligned()
                                     };
                                     let dir = if event.direction == 0 { "TX" } else { "RX" };
                                     let prev = count.fetch_add(1, Ordering::Relaxed);
@@ -255,11 +252,10 @@ async fn collect_live_events(bpf: &mut aya::Ebpf, probe_type: &str) -> Result<()
                         .collect::<Vec<_>>();
                     loop {
                         if let Ok(events) = buf.read_events(&mut buffers).await {
-                            for i in 0..events.read {
-                                if buffers[i].len() >= std::mem::size_of::<SyscallEvent>() {
+                            for buffer in buffers.iter().take(events.read) {
+                                if buffer.len() >= std::mem::size_of::<SyscallEvent>() {
                                     let event = unsafe {
-                                        (buffers[i].as_ptr() as *const SyscallEvent)
-                                            .read_unaligned()
+                                        (buffer.as_ptr() as *const SyscallEvent).read_unaligned()
                                     };
                                     let name = syscall_nr_to_name(event.syscall_nr);
                                     let prev = count.fetch_add(1, Ordering::Relaxed);
@@ -300,8 +296,7 @@ async fn collect_live_events(bpf: &mut aya::Ebpf, probe_type: &str) -> Result<()
 
     println!();
     println!(
-        "  {} Captured {} uprobe, {} tcp, {} syscall events in 3s",
-        "📊",
+        "  📊 Captured {} uprobe, {} tcp, {} syscall events in 3s",
         u.to_string().bright_magenta(),
         t.to_string().bright_cyan(),
         s.to_string().bright_yellow(),
@@ -493,10 +488,7 @@ fn resolve_symbol_offset(binary: &str, symbol: &str) -> bool {
     elf.syms.iter().any(|sym| {
         sym.st_type() == goblin::elf::sym::STT_FUNC
             && sym.st_value != 0
-            && elf
-                .strtab
-                .get_at(sym.st_name)
-                .map_or(false, |name| name == symbol)
+            && elf.strtab.get_at(sym.st_name) == Some(symbol)
     })
 }
 

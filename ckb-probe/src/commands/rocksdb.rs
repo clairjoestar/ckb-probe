@@ -453,8 +453,8 @@ async fn run_stats_loop(
                 .total_ns
                 .saturating_sub(prev_snapshots[id].total_ns);
             let mut delta_hist_1s = [0u64; 64];
-            for i in 0..64 {
-                delta_hist_1s[i] = snapshots[id].hist[i].saturating_sub(prev_snapshots[id].hist[i]);
+            for (i, slot) in delta_hist_1s.iter_mut().enumerate() {
+                *slot = snapshots[id].hist[i].saturating_sub(prev_snapshots[id].hist[i]);
             }
 
             if dc_1s >= MIN_SAMPLES_FOR_1S {
@@ -467,8 +467,8 @@ async fn run_stats_loop(
                 if dc_w > 0 {
                     cur_avg_us[id] = dn_w as f64 / dc_w as f64 / 1000.0;
                     let mut delta_hist_w = [0u64; 64];
-                    for i in 0..64 {
-                        delta_hist_w[i] = snapshots[id].hist[i].saturating_sub(old[id].hist[i]);
+                    for (i, slot) in delta_hist_w.iter_mut().enumerate() {
+                        *slot = snapshots[id].hist[i].saturating_sub(old[id].hist[i]);
                     }
                     cur_p99_us[id] = percentile_from_hist(&delta_hist_w, 99.0) as f64 / 1000.0;
                 }
@@ -589,6 +589,7 @@ const COL_BYTES: usize = 13; // "  1.2 MB/s  "
 const INSIDE_W: usize = COL_OP + COL_QPS + COL_AVG + COL_P50 + COL_P99 + COL_BYTES + 5 + 12;
 // 10 + 5 + 7 + 7 + 7 + 13 + 5 + 12 = 66
 
+#[allow(clippy::too_many_arguments)]
 fn print_table(
     attached: &[(u32, &str, bool)],
     cur: &[OpSnapshot],
@@ -687,8 +688,8 @@ fn print_table(
         };
 
         let mut delta_hist = [0u64; 64];
-        for i in 0..64 {
-            delta_hist[i] = cur[id].hist[i].saturating_sub(prev[id].hist[i]);
+        for (i, slot) in delta_hist.iter_mut().enumerate() {
+            *slot = cur[id].hist[i].saturating_sub(prev[id].hist[i]);
         }
         let p50_us = percentile_from_hist(&delta_hist, 50.0) as f64 / 1000.0;
         let p99_us = percentile_from_hist(&delta_hist, 99.0) as f64 / 1000.0;
@@ -760,8 +761,8 @@ fn print_table(
             .map(|p| p.0 as usize)
         {
             let mut delta_hist = [0u64; 64];
-            for i in 0..64 {
-                delta_hist[i] = cur[write_id].hist[i].saturating_sub(prev[write_id].hist[i]);
+            for (i, slot) in delta_hist.iter_mut().enumerate() {
+                *slot = cur[write_id].hist[i].saturating_sub(prev[write_id].hist[i]);
             }
             let write_p99_us = percentile_from_hist(&delta_hist, 99.0) as f64 / 1000.0;
             if write_p99_us > 1000.0 {
@@ -791,8 +792,8 @@ fn print_histogram(attached: &[(u32, &str, bool)], cur: &[OpSnapshot], prev: &[O
     for &(func_id, display, _) in attached {
         let id = func_id as usize;
         let mut delta_hist = [0u64; 64];
-        for i in 0..64 {
-            delta_hist[i] = cur[id].hist[i].saturating_sub(prev[id].hist[i]);
+        for (i, slot) in delta_hist.iter_mut().enumerate() {
+            *slot = cur[id].hist[i].saturating_sub(prev[id].hist[i]);
         }
         let max_count = *delta_hist.iter().max().unwrap_or(&0);
         if max_count == 0 {
@@ -802,9 +803,14 @@ fn print_histogram(attached: &[(u32, &str, bool)], cur: &[OpSnapshot], prev: &[O
         println!("  {} latency distribution:", display.bold());
         let last_nonzero = delta_hist.iter().rposition(|&c| c > 0).unwrap_or(0);
         let start_bucket = delta_hist.iter().position(|&c| c > 0).unwrap_or(0);
-        for i in start_bucket..=last_nonzero.min(39) {
+        let end = last_nonzero.min(39);
+        for (i, &count) in delta_hist
+            .iter()
+            .enumerate()
+            .take(end + 1)
+            .skip(start_bucket)
+        {
             let label = bucket_label(i);
-            let count = delta_hist[i];
             let bar_len = if max_count > 0 {
                 (count * 40 / max_count) as usize
             } else {
@@ -843,8 +849,8 @@ fn print_json(
             0.0
         };
         let mut delta_hist = [0u64; 64];
-        for i in 0..64 {
-            delta_hist[i] = cur[id].hist[i].saturating_sub(prev[id].hist[i]);
+        for (i, slot) in delta_hist.iter_mut().enumerate() {
+            *slot = cur[id].hist[i].saturating_sub(prev[id].hist[i]);
         }
         let p50_us = percentile_from_hist(&delta_hist, 50.0) as f64 / 1000.0;
         let p99_us = percentile_from_hist(&delta_hist, 99.0) as f64 / 1000.0;
