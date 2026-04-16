@@ -4,7 +4,7 @@
 use aya_ebpf::{
     helpers::{bpf_get_current_pid_tgid, bpf_ktime_get_ns, bpf_probe_read_user},
     macros::{kprobe, kretprobe, map, tracepoint, uprobe, uretprobe},
-    maps::{Array, HashMap, PerCpuArray, PerfEventArray},
+    maps::{Array, HashMap, PerCpuArray, PerfEventArray, RingBuf},
     programs::{ProbeContext, RetProbeContext, TracePointContext},
 };
 use ckb_probe_common::{
@@ -24,7 +24,7 @@ static TARGET_PID: HashMap<u32, u8> = HashMap::with_max_entries(8, 0);
 /// `size` is the operation payload in bytes when the entry probe can read it
 /// from a function argument (0 = not tracked for this op).
 #[map]
-static UPROBE_START: HashMap<u32, (u64, u32, u64)> = HashMap::with_max_entries(10240, 0);
+static UPROBE_START: HashMap<u32, (u64, u32, u64)> = HashMap::with_max_entries(1024, 0);
 
 /// uprobe latency event output (used by `check` live event collection).
 #[map]
@@ -32,7 +32,7 @@ static UPROBE_EVENTS: PerfEventArray<UprobeLatencyEvent> = PerfEventArray::new(0
 
 /// kprobe entry timestamp: key = tid.
 #[map]
-static TCP_START: HashMap<u32, u64> = HashMap::with_max_entries(10240, 0);
+static TCP_START: HashMap<u32, u64> = HashMap::with_max_entries(1024, 0);
 
 /// TCP event output.
 #[map]
@@ -58,8 +58,10 @@ static LATENCY_HIST: PerCpuArray<u64> =
     PerCpuArray::with_max_entries(MAX_FUNC_ID * HIST_BUCKETS, 0);
 
 /// Slow operation events — only emitted when latency > threshold.
+/// RingBuf: single shared buffer, no per-event wakeup, batch consumption.
+/// 256KB is sufficient for 10K+ events/sec (each ~40 bytes).
 #[map]
-static SLOW_EVENTS: PerfEventArray<SlowEvent> = PerfEventArray::new(0);
+static SLOW_EVENTS: RingBuf = RingBuf::with_byte_size(256 * 1024, 0);
 
 /// Slow threshold in nanoseconds. Index 0 = threshold value.
 #[map]
@@ -68,9 +70,9 @@ static SLOW_THRESHOLD: Array<u64> = Array::with_max_entries(1, 0);
 /// Per-tid running total of bytes written via `rocksdb_transaction_put_cf`
 /// since the last `rocksdb_transaction_commit` on the same thread.
 /// At commit time we snapshot this value as the commit's "size", then reset.
-/// Bounds: 10240 entries × 8B = ~80 KB; one entry per active worker thread.
+/// Bounds: 1024 entries × 8B = ~8 KB; one entry per active worker thread.
 #[map]
-static PUT_PENDING_BYTES: HashMap<u32, u64> = HashMap::with_max_entries(10240, 0);
+static PUT_PENDING_BYTES: HashMap<u32, u64> = HashMap::with_max_entries(1024, 0);
 
 // ============================================================
 // Helpers
@@ -191,7 +193,7 @@ fn uprobe_return_with_extra(ctx: &RetProbeContext, extra_bytes: u64) {
                     size: total_size,
                     ts: now,
                 };
-                SLOW_EVENTS.output(ctx, &slow, 0);
+                let _ = SLOW_EVENTS.output(&slow, 0);
             }
         }
 

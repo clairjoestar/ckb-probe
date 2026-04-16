@@ -1,14 +1,12 @@
 use anyhow::Result;
-use aya::maps::{AsyncPerfEventArray, PerCpuArray};
+use aya::maps::{PerCpuArray, RingBuf};
 use aya::programs::UProbe;
-use aya::util::online_cpus;
-use bytes::BytesMut;
 use chrono::{SecondsFormat, Utc};
 use ckb_probe_common::{OpStats, SlowEvent, HIST_BUCKETS, MAX_FUNC_ID};
 use colored::Colorize;
 use std::collections::VecDeque;
 use std::process::Command;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::time::{interval, Duration};
 
@@ -90,7 +88,7 @@ impl Default for OpSnapshot {
 /// * `WARMUP_SECS` is the initial period during which the baseline is collected
 ///   but no anomalies are emitted (avoids false positives at startup).
 /// * `SPIKE_MULTIPLIER` is the threshold (avg latency) over baseline that triggers an alert.
-/// * `P99_SPIKE_MULTIPLIER` is the threshold for P99 latency over its baseline.
+/// * `P99_SPIKE_MULTIPLIER` is the  for P99 latency over its baseline.
 /// * `ABS_FLOOR_US` is a minimum baseline floor — prevents tiny baselines from
 ///   producing nonsense ratios and keeps "uniformly slow" workloads detectable.
 const BASELINE_ALPHA: f64 = 0.05;
@@ -216,14 +214,13 @@ impl AnomalyDetector {
 // Entry point
 // ════════════════════════════════════════════════════════════════
 
-pub async fn run(args: RocksdbArgs) -> Result<()> {
+pub async fn run(mut args: RocksdbArgs) -> Result<()> {
     let binary = std::fs::canonicalize(&args.binary)
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_else(|_| args.binary.clone());
 
     let node_label = detect_ckb_version(&binary);
 
-    // Load BPF
     let ebpf_path =
         std::path::Path::new("ckb-probe-ebpf/target/bpfel-unknown-none/release/ckb-probe-ebpf");
     if !ebpf_path.exists() {
@@ -232,68 +229,183 @@ pub async fn run(args: RocksdbArgs) -> Result<()> {
             ebpf_path
         );
     }
-    let data = std::fs::read(ebpf_path)?;
-    let mut bpf = aya::Ebpf::load(&data)?;
 
-    // Set target PID
-    let mut target_pid: aya::maps::HashMap<_, u32, u8> =
-        aya::maps::HashMap::try_from(bpf.map_mut("TARGET_PID").unwrap())?;
-    target_pid.insert(args.pid, 1, 0)?;
+    // Global Ctrl+C handler — shared across reconnect cycles.
+    let global_running = Arc::new(AtomicBool::new(true));
+    {
+        let r = global_running.clone();
+        tokio::spawn(async move {
+            let _ = tokio::signal::ctrl_c().await;
+            r.store(false, Ordering::SeqCst);
+        });
+    }
 
-    // Set slow threshold (μs → ns)
-    let threshold_ns = args.threshold * 1000;
-    let mut config: aya::maps::Array<_, u64> =
-        aya::maps::Array::try_from(bpf.map_mut("SLOW_THRESHOLD").unwrap())?;
-    config.set(0, threshold_ns, 0)?;
+    let mut current_pid = args.pid;
 
-    // Attach 5 uprobe pairs
-    let mut attached: Vec<(u32, &str, bool)> = Vec::new();
-    for &(entry_fn, ret_fn, symbol, func_id, display, has_bytes) in MONITOR_PROBES {
-        let uprobe: &mut UProbe = bpf.program_mut(entry_fn).unwrap().try_into()?;
-        uprobe.load()?;
-        match uprobe.attach(Some(symbol), 0, &binary, None) {
-            Ok(_) => {
-                let uretprobe: &mut UProbe = bpf.program_mut(ret_fn).unwrap().try_into()?;
-                uretprobe.load()?;
-                uretprobe.attach(Some(symbol), 0, &binary, None)?;
-                attached.push((func_id, display, has_bytes));
-                eprintln!("  ✅ attached {}", symbol);
+    loop {
+        args.pid = current_pid;
+
+        // Load BPF (fresh instance each cycle so maps & programs are clean)
+        let data = std::fs::read(ebpf_path)?;
+        let mut bpf = aya::Ebpf::load(&data)?;
+
+        // Set target PID
+        let mut target_pid: aya::maps::HashMap<_, u32, u8> =
+            aya::maps::HashMap::try_from(bpf.map_mut("TARGET_PID").unwrap())?;
+        target_pid.insert(current_pid, 1, 0)?;
+
+        // Set slow threshold (μs → ns)
+        let threshold_ns = args.threshold * 1000;
+        let mut config: aya::maps::Array<_, u64> =
+            aya::maps::Array::try_from(bpf.map_mut("SLOW_THRESHOLD").unwrap())?;
+        config.set(0, threshold_ns, 0)?;
+
+        // Attach 5 uprobe pairs
+        let mut attached: Vec<(u32, &str, bool)> = Vec::new();
+        for &(entry_fn, ret_fn, symbol, func_id, display, has_bytes) in MONITOR_PROBES {
+            let uprobe: &mut UProbe = bpf.program_mut(entry_fn).unwrap().try_into()?;
+            uprobe.load()?;
+            match uprobe.attach(Some(symbol), 0, &binary, None) {
+                Ok(_) => {
+                    let uretprobe: &mut UProbe = bpf.program_mut(ret_fn).unwrap().try_into()?;
+                    uretprobe.load()?;
+                    uretprobe.attach(Some(symbol), 0, &binary, None)?;
+                    attached.push((func_id, display, has_bytes));
+                    eprintln!("  ✅ attached {}", symbol);
+                }
+                Err(_) => {
+                    eprintln!("  ❌ {} not found in binary, skipping", symbol);
+                }
             }
-            Err(_) => {
-                eprintln!("  ❌ {} not found in binary, skipping", symbol);
+        }
+
+        if attached.is_empty() {
+            anyhow::bail!("No RocksDB symbols found in binary — nothing to monitor");
+        }
+
+        eprintln!();
+        eprintln!(
+            "  Monitoring {} operations on PID {} (threshold: {}μs, interval: {}s)",
+            attached.len(),
+            current_pid,
+            args.threshold,
+            args.interval,
+        );
+        eprintln!("  Press Ctrl+C to stop.");
+        eprintln!();
+
+        // Per-cycle running flag — set to false on process exit OR Ctrl+C.
+        let running = Arc::new(AtomicBool::new(true));
+
+        // S-4: detect target process exit
+        let pid_exited = Arc::new(AtomicBool::new(false));
+        {
+            let r = running.clone();
+            let gr = global_running.clone();
+            let exited = pid_exited.clone();
+            let pid = current_pid;
+            tokio::spawn(async move {
+                let proc_path = format!("/proc/{}", pid);
+                loop {
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    if !std::path::Path::new(&proc_path).exists() {
+                        exited.store(true, Ordering::SeqCst);
+                        r.store(false, Ordering::SeqCst);
+                        break;
+                    }
+                    if !gr.load(Ordering::SeqCst) {
+                        r.store(false, Ordering::SeqCst);
+                        break;
+                    }
+                }
+            });
+        }
+
+        if args.slow {
+            run_slow_mode(&mut bpf, &attached, &args, &running).await?;
+        } else if args.json {
+            run_stats_loop(&mut bpf, &attached, &args, &running, &node_label, true).await?;
+        } else {
+            run_stats_loop(&mut bpf, &attached, &args, &running, &node_label, false).await?;
+        }
+
+        // BPF resources are dropped here when `bpf` goes out of scope.
+        drop(bpf);
+
+        if !pid_exited.load(Ordering::SeqCst) {
+            // Normal Ctrl+C exit
+            break;
+        }
+
+        // S-4: process exited — wait for a new CKB process with the same binary.
+        eprintln!();
+        eprintln!(
+            "  {} Target process (PID {}) exited. Waiting for CKB to restart...",
+            "⚠".bright_yellow(),
+            current_pid,
+        );
+
+        match wait_for_new_pid(&binary, &global_running).await {
+            Some(new_pid) => {
+                eprintln!(
+                    "  {} CKB restarted (new PID {}). Reattaching probes...",
+                    "✅".green(),
+                    new_pid,
+                );
+                eprintln!();
+                current_pid = new_pid;
+                // Loop back to reload BPF and reattach
+            }
+            None => {
+                // Ctrl+C during wait
+                break;
             }
         }
     }
 
-    if attached.is_empty() {
-        anyhow::bail!("No RocksDB symbols found in binary — nothing to monitor");
+    Ok(())
+}
+
+/// Scan /proc for a process whose exe symlink matches `binary`.
+fn find_pid_by_binary(binary: &str) -> Option<u32> {
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return None;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(pid_str) = name.to_str() else {
+            continue;
+        };
+        let Ok(pid) = pid_str.parse::<u32>() else {
+            continue;
+        };
+        let exe_path = format!("/proc/{}/exe", pid);
+        if let Ok(target) = std::fs::read_link(&exe_path) {
+            if let Ok(canon) = std::fs::canonicalize(&target) {
+                if canon.to_string_lossy() == binary {
+                    return Some(pid);
+                }
+            }
+            // Also check the raw symlink target (may already be canonical)
+            if target.to_string_lossy() == binary {
+                return Some(pid);
+            }
+        }
     }
+    None
+}
 
-    eprintln!();
-    eprintln!(
-        "  Monitoring {} operations on PID {} (threshold: {}μs, interval: {}s)",
-        attached.len(),
-        args.pid,
-        args.threshold,
-        args.interval,
-    );
-    eprintln!("  Press Ctrl+C to stop.");
-    eprintln!();
-
-    // Graceful shutdown
-    let running = Arc::new(AtomicBool::new(true));
-    let r = running.clone();
-    tokio::spawn(async move {
-        let _ = tokio::signal::ctrl_c().await;
-        r.store(false, Ordering::SeqCst);
-    });
-
-    if args.slow {
-        run_slow_mode(&mut bpf, &attached, &args, &running).await
-    } else if args.json {
-        run_stats_loop(&mut bpf, &attached, &args, &running, &node_label, true).await
-    } else {
-        run_stats_loop(&mut bpf, &attached, &args, &running, &node_label, false).await
+/// Poll for a new CKB process with the given binary, returning its PID.
+/// Returns None if Ctrl+C is pressed during the wait.
+async fn wait_for_new_pid(binary: &str, running: &Arc<AtomicBool>) -> Option<u32> {
+    loop {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        if !running.load(Ordering::SeqCst) {
+            return None;
+        }
+        if let Some(pid) = find_pid_by_binary(binary) {
+            return Some(pid);
+        }
     }
 }
 
@@ -812,36 +924,37 @@ async fn run_slow_mode(
     args: &RocksdbArgs,
     running: &Arc<AtomicBool>,
 ) -> Result<()> {
-    let cpus =
-        online_cpus().map_err(|e| anyhow::anyhow!("failed to get online cpus: {:?}", e))?;
-
     let map = bpf
         .take_map("SLOW_EVENTS")
         .ok_or_else(|| anyhow::anyhow!("SLOW_EVENTS map not found"))?;
-    let mut perf_array: AsyncPerfEventArray<_> = AsyncPerfEventArray::try_from(map)?;
+    let ring_buf = RingBuf::try_from(map)?;
 
-    // Channel for events from per-CPU readers to the renderer.
+    // Channel for events from ring buffer reader to the renderer.
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<SlowEvent>();
 
+    // RingBuf drops are reported as errors in kernel-side output(),
+    // not as lost events in userspace. We track total attempted vs received.
+    let total_lost = Arc::new(AtomicU64::new(0));
+
+    // Single reader thread — RingBuf is shared across all CPUs.
+    // Poll every 50ms to batch-consume events. No per-event wakeup needed.
     let running2 = running.clone();
     let mut handles = Vec::new();
-    for cpu_id in cpus {
-        let mut buf = perf_array.open(cpu_id, Some(1024))?;
+    {
         let r = running2.clone();
         let txc = tx.clone();
         handles.push(tokio::spawn(async move {
-            let mut buffers = (0..10)
-                .map(|_| BytesMut::with_capacity(256))
-                .collect::<Vec<_>>();
+            let mut ring = ring_buf;
+            let mut poll = tokio::time::interval(Duration::from_millis(50));
             while r.load(Ordering::SeqCst) {
-                if let Ok(events) = buf.read_events(&mut buffers).await {
-                    for i in 0..events.read {
-                        if buffers[i].len() >= std::mem::size_of::<SlowEvent>() {
-                            let event = unsafe {
-                                (buffers[i].as_ptr() as *const SlowEvent).read_unaligned()
-                            };
-                            let _ = txc.send(event);
-                        }
+                poll.tick().await;
+                // Drain all available events
+                while let Some(item) = ring.next() {
+                    if item.len() >= std::mem::size_of::<SlowEvent>() {
+                        let event = unsafe {
+                            (item.as_ptr() as *const SlowEvent).read_unaligned()
+                        };
+                        let _ = txc.send(event);
                     }
                 }
             }
@@ -859,7 +972,8 @@ async fn run_slow_mode(
     while running.load(Ordering::SeqCst) {
         tokio::select! {
             _ = tick.tick() => {
-                render_slow_table(&rows, total, args.threshold, start.elapsed());
+                let lost = total_lost.load(Ordering::Relaxed);
+                render_slow_table(&rows, total, lost, args.threshold, start.elapsed());
             }
             ev = rx.recv() => {
                 let Some(ev) = ev else { break; };
@@ -888,7 +1002,13 @@ async fn run_slow_mode(
     Ok(())
 }
 
-fn render_slow_table(rows: &VecDeque<SlowRow>, total: u64, threshold: u64, elapsed: Duration) {
+fn render_slow_table(
+    rows: &VecDeque<SlowRow>,
+    total: u64,
+    lost: u64,
+    threshold: u64,
+    elapsed: Duration,
+) {
     print!("\x1B[2J\x1B[H");
 
     // Column widths
@@ -983,6 +1103,27 @@ fn render_slow_table(rows: &VecDeque<SlowRow>, total: u64, threshold: u64, elaps
         total,
         window.max(1),
     );
+
+    // P-3: BPF event loss rate. The denominator is total events the BPF side
+    // attempted to emit (delivered + dropped); a healthy run should keep this
+    // under 0.1% per the project performance constraints.
+    let attempted = total + lost;
+    let loss_pct = if attempted > 0 {
+        lost as f64 / attempted as f64 * 100.0
+    } else {
+        0.0
+    };
+    let label = format!(
+        "  BPF event loss: {} / {} attempted  ({:.4}%)",
+        lost, attempted, loss_pct
+    );
+    if loss_pct >= 0.1 {
+        println!("{}  ⚠️  exceeds P-3 budget (0.1%)", label.bright_red());
+    } else if lost > 0 {
+        println!("{}", label.bright_yellow());
+    } else {
+        println!("{}", label.dimmed());
+    }
 }
 
 // ════════════════════════════════════════════════════════════════
