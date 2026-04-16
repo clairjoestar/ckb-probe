@@ -1,0 +1,29 @@
+# Cargo build artifacts
+target/
+ckb-probe-ebpf/target/
+**/target/
+
+# CKB chain data (huge!)
+data/
+backup/
+*.tar
+*.tar.gz
+*.tar.zst
+
+# Misc heavy / private
+.git/
+.claude/
+.cargo/registry/
+.cargo/git/
+ckb_v0.205.0_x86_64-unknown-linux-gnu*
+ckb/
+
+# Project planning / private docs (not needed in image)
+prompt.md
+main_proj.md
+weekly-report-*.md
+docs/
+
+# Editor / OS junk
+*.swp
+.DS_Store

@@ -1,0 +1,22 @@
+# Aggressive RocksDB tuning for ckb-probe case study (NOT for production!)
+#
+# These overrides make compaction trigger much more often than CKB defaults,
+# so case-2 (compaction storm) can be reproduced reliably even on a synced
+# node with steady-state workload.
+
+[store.options]
+# L0 file thresholds — default 4/20/36, here much lower
+"level0_file_num_compaction_trigger" = "1"
+"level0_slowdown_writes_trigger"     = "2"
+"level0_stop_writes_trigger"         = "3"
+
+# Limit background compaction parallelism so it lags behind writes
+"max_background_jobs"        = "1"
+"max_background_compactions" = "1"
+
+# Make SST files smaller so there are more of them, more frequent compaction
+"target_file_size_base"      = "1048576"      # 1 MB (default 64 MB)
+"max_bytes_for_level_base"   = "10485760"     # 10 MB (default 256 MB)
+
+# Smaller memtable so flushes happen often → more L0 files → more compaction
+"write_buffer_size"          = "4194304"      # 4 MB (default 64 MB)
