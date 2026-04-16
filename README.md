@@ -6,169 +6,290 @@ Deep observability tool for CKB full nodes, powered by eBPF.
 
 ## Introduction
 
-ckb-probe leverages eBPF (uprobe / kprobe / tracepoint) to deliver application-semantic, real-time performance insights for CKB full nodes.
-
-- **`check`** — Verifies environment prerequisites, attaches eBPF probes to a live CKB process, and collects real-time events.
-- **`symbols`** — Scans the ELF symbol table of a CKB binary and classifies uprobe-attachable probe targets.
+ckb-probe leverages eBPF (uprobe / kprobe / tracepoint) to deliver application-semantic, real-time performance insights for CKB full nodes — without modifying CKB source code. It outputs "RocksDB GET took 23μs, read 512 bytes" instead of "pwrite64 syscall".
 
 ## Features
 
-- **ELF Symbol Parsing**: Parses `.symtab` / `.dynsym` via `goblin`, detects strip status and DWARF debug info automatically.
-- **RocksDB Linkage Detection**: Determines whether RocksDB is statically linked (embedded) or dynamically linked (librocksdb.so).
-- **Three-tier Symbol Classification**:
-  - **Tier 1** — RocksDB C API symbols (`extern "C"`, no mangling), stable across versions, ideal uprobe targets (20 tracked).
-  - **Tier 2** — Rust cross-crate public functions (mangled), present in most self-compiled release builds (21 tracked).
-  - **Tier 3** — Inlined / LTO-eliminated / crate-internal functions, usually unavailable in release builds (12 tracked).
-- **Environment Check**: 8-point environment verification with colored pass/fail report.
-- **eBPF Probe Validation + Live Event Collection**:
-  - RocksDB uprobe/uretprobe latency measurement (entry/return pairing, real-time μs-level latency)
-  - TCP kprobe (`tcp_sendmsg` / `tcp_recvmsg`) byte-level monitoring
-  - `sys_enter` tracepoint syscall distribution analysis
-  - 3-second live event capture with per-probe-type event counts
-- **Multiple Output Formats**: Colored terminal report / machine-readable JSON.
-- **Flexible Filtering**: Filter by keyword substring or by tier level.
+- **Five RocksDB operations tracked**: GET, PUT, WRITE, ITER_NEW, TXN_COMMIT via uprobe/uretprobe
+- **Real-time metrics**: QPS, Avg/P50/P99 latency, Bytes/s per operation
+- **Four display modes**: Default table / Histogram / Slow operations / JSON
+- **EWMA anomaly detection**: Baseline learning + 5× spike alert + absolute P99 caps
+- **Process restart recovery**: Auto-detects CKB exit and reattaches to new PID (S-4)
+- **Low overhead**: +1.29% CPU, 22.9 MB RSS, zero BPF event loss at 13K events/sec
+- **Three-tier symbol analysis**: Classifies CKB binary symbols for uprobe feasibility
+- **eBPF probe validation**: Verifies uprobe/kprobe/tracepoint + live event collection
+- **Docker reproducible environment**: Single container with all tools and scripts
 
-## Build
+## Subcommands
 
-```bash
-# Build eBPF programs + userspace CLI
-cargo xtask build
+| Command | Description |
+|---------|-------------|
+| `check` | Environment verification + eBPF probe validation + live event collection |
+| `symbols` | ELF symbol analysis with three-tier classification |
+| `rocksdb` | Real-time RocksDB monitoring (table / histogram / slow ops / JSON) |
 
-# Build eBPF programs only (requires nightly + BPF target)
-cargo xtask build-ebpf
+## Quick Start
 
-# Build userspace CLI only (requires Rust toolchain)
-cargo build --release
-```
+### Prerequisites
 
-The binary is located at `target/release/ckb-probe`.
+- Linux kernel ≥ 5.8 with BTF support (`/sys/kernel/btf/vmlinux`)
+- Root or CAP_BPF + CAP_SYS_ADMIN
+- Docker ≥ 20.10
+- CKB testnet node with data directory
+- **Testnet only. Never use with mainnet.**
 
-## Usage
-
-### Environment Check
+### 1. Clone and build Docker image
 
 ```bash
-# Quick environment check (8 items)
-ckb-probe check
-
-# + CKB binary symbol verification
-ckb-probe check --binary /path/to/ckb
+git clone https://github.com/<org>/ckb-probe.git
+cd ckb-probe
+docker build -f docker/Dockerfile -t ckb-probe:latest .
 ```
 
-### eBPF Validation + Live Events (requires root)
+Build takes ~10-15 min. Image is ~163 MB and includes CKB binary, ckb-probe, db_bench, and all scripts.
+
+### 2. Prepare CKB node
+
+Place your CKB testnet node data on the host:
+
+```
+/root/ckb-testnet/
+├── ckb              # CKB binary
+├── ckb.toml         # Config
+└── data/            # Chain data (contains db/ subdirectory)
+```
+
+Start CKB:
 
 ```bash
-# Full validation: attach all probes + collect 3s live events
-ckb-probe check --binary /path/to/ckb --pid <CKB_PID>
-
-# Validate specific probe type only
-ckb-probe check --binary /path/to/ckb --pid <CKB_PID> --probe uprobe
-ckb-probe check --binary /path/to/ckb --pid <CKB_PID> --probe kprobe
-ckb-probe check --binary /path/to/ckb --pid <CKB_PID> --probe tracepoint
+cd /root/ckb-testnet && ./ckb run &
 ```
 
-Example output:
+### 3. Docker run template
 
-```
-╔══════════════════════════════════════════════════════════════╗
-║  ckb-probe eBPF validation                                 ║
-╠══════════════════════════════════════════════════════════════╣
-  ✅   rocksdb_get_pinned_cf   entry + return attached
-  ✅   rocksdb_put             entry + return attached
-  ✅   rocksdb_write           entry + return attached
-  ✅ uprobe summary            latency pairs: 4/6, Tier 1 symbols: 15/19
-  ✅ kprobe tcp_sendmsg_entry  attached to tcp_sendmsg
-  ✅ tracepoint sys_enter      attached to raw_syscalls/sys_enter
-╚══════════════════════════════════════════════════════════════╝
-
-  ⏳ Collecting live events for 3 seconds...
-
-  [uprobe] pid=3127545 tid=3127553 func=get_pinned_cf            latency=84.7μs
-  [uprobe] pid=3127545 tid=3127553 func=write                    latency=44.9μs
-  [uprobe] pid=3127545 tid=3127553 func=create_iterator_cf       latency=23.2μs
-  [tcp]    pid=3127545 tid=3127556 dir=TX bytes=1471
-  [syscall] pid=3127545 tid=3127565 nr=232 (epoll_wait)
-
-  📊 Captured 1873 uprobe, 2 tcp, 621 syscall events in 3s
-```
-
-### Symbol Analysis
+All scripts run via this template:
 
 ```bash
-# Analyse symbol availability of a CKB binary
-ckb-probe symbols /path/to/ckb
-
-# JSON output
-ckb-probe symbols /path/to/ckb --json
-
-# Verbose mode (mangled names, addresses, sizes)
-ckb-probe symbols /path/to/ckb --verbose
-
-# Filter by tier or keyword
-ckb-probe symbols /path/to/ckb --tier 1
-ckb-probe symbols /path/to/ckb --filter transaction
+DOCKER_RUN="docker run --rm --privileged --pid host --network host \
+  -v /sys/kernel/debug:/sys/kernel/debug:ro \
+  -v /sys/kernel/btf:/sys/kernel/btf:ro \
+  -v /root/ckb-testnet/ckb:/root/ckb-testnet/ckb:ro \
+  -v /tmp/perf-run:/tmp/perf-run \
+  -e CKB_BIN=/root/ckb-testnet/ckb \
+  -e CKB_RPC=http://127.0.0.1:8124 \
+  ckb-probe:latest"
 ```
 
-### Help
+> **Important:** The `-v` mount path for CKB binary must match the host process exe path exactly. Verify with `readlink /proc/$(pgrep -x ckb)/exe`. If paths don't match, uprobe cannot attach and no data will be collected.
+
+### 4. Run demo scripts
 
 ```bash
-ckb-probe --help
-ckb-probe check --help
-ckb-probe symbols --help
+$DOCKER_RUN demo-check             # Environment + symbol check       (< 30s)
+$DOCKER_RUN demo-table 60          # Default stats table              (60s)
+$DOCKER_RUN demo-histogram 60      # Latency distribution histogram   (60s)
+$DOCKER_RUN demo-slow 60 1000      # Slow operations (threshold 1ms)  (60s)
+$DOCKER_RUN demo-normal 60         # JSON monitoring output            (60s)
+$DOCKER_RUN demo-stress 100000     # db_bench stress + anomaly detect  (2-3 min)
 ```
 
-## Tests
+### 5. Run performance test (P-1 ~ P-4)
+
+CKB must be **behind network tip** (IBD state) for meaningful results. Use node data that has been offline for hours/days, or stop CKB for a few hours before testing.
 
 ```bash
-cargo test --workspace
+# Full 4h test (Phase A with-probe + Phase B baseline)
+docker run -d --name perf-test \
+  --privileged --pid host --network host \
+  -v /sys/kernel/debug:/sys/kernel/debug:ro \
+  -v /sys/kernel/btf:/sys/kernel/btf:ro \
+  -v /root/ckb-testnet/ckb:/root/ckb-testnet/ckb:ro \
+  -v /tmp/perf-run:/tmp/perf-run \
+  -e CKB_BIN=/root/ckb-testnet/ckb \
+  -e CKB_RPC=http://127.0.0.1:8124 \
+  ckb-probe:latest perf
+
+# Monitor progress
+tail -5 /tmp/perf-run/progress.log
+
+# View report
+cat /tmp/perf-run/REPORT.txt
 ```
+
+For strict P-4 comparison (both phases in IBD), run Phase A and Phase B separately with fresh data each time:
+
+```bash
+# Phase A only (with-probe): stop CKB, unzip fresh data, then:
+./docker/scripts/perf/perf-phase-a.sh /root/ckb-testnet
+
+# Phase B only (baseline): stop CKB, unzip fresh data again, then:
+./docker/scripts/perf/perf-phase-b.sh /root/ckb-testnet
+```
+
+### 6. Run case studies
+
+```bash
+# IBD write pattern analysis (CKB must be in IBD state)
+$DOCKER_RUN case-1 3600
+
+# Compaction storm capture (applies aggressive tuning, auto-restores config)
+$DOCKER_RUN case-2 1800
+```
+
+### 7. Run 48h stability test (S-1 ~ S-4)
+
+```bash
+docker run -d --name stability-test \
+  --privileged --pid host --network host \
+  -v /sys/kernel/debug:/sys/kernel/debug:ro \
+  -v /sys/kernel/btf:/sys/kernel/btf:ro \
+  -v /root/ckb-testnet/ckb:/root/ckb-testnet/ckb:ro \
+  -v /tmp/perf-run:/tmp/perf-run \
+  -e CKB_BIN=/root/ckb-testnet/ckb \
+  -e CKB_RPC=http://127.0.0.1:8124 \
+  ckb-probe:latest stability
+
+# Shorten for quick validation
+docker run -d --name stability-test \
+  ... \
+  -e DURATION_HOURS=2 \
+  ckb-probe:latest stability
+```
+
+Tests: S-1 (no crash for 48h), S-2 (RSS growth ≤ 5 MB), S-3 (no BPF dmesg errors), S-4 (auto-reconnect after CKB restart at T+24h).
+
+### 8. Interactive shell
+
+```bash
+docker run --rm -it --privileged --pid host --network host \
+  -v /sys/kernel/debug:/sys/kernel/debug:ro \
+  -v /sys/kernel/btf:/sys/kernel/btf:ro \
+  -v /root/ckb-testnet/ckb:/root/ckb-testnet/ckb:ro \
+  --entrypoint "" \
+  ckb-probe:latest bash
+```
+
+## Performance Test Results (P-1 ~ P-4)
+
+Tested on CKB testnet with real IBD workload (Docker, 24-core Linux 6.8, CKB v0.204.0):
+
+| Metric | Result | Budget | Status |
+|--------|--------|--------|--------|
+| P-1 CPU overhead | +1.29% (relative) | ≤ 3% | ✅ PASS |
+| P-2 RSS memory | 22.89 MB (stable, no growth) | ≤ 50 MB | ✅ PASS |
+| P-3 BPF event loss | 0 / 20M events (0.0000%), peak 13K/s | < 0.1% | ✅ PASS |
+| P-4 Sync degradation | -0.86% (no degradation) | < 1% | ✅ PASS |
+
+## All Docker Commands
+
+| Command | Description | Duration |
+|---------|-------------|----------|
+| **Demo** | | |
+| `demo-check` | Environment + symbol check + eBPF validation | < 30s |
+| `demo-table [secs]` | Default stats table | 60s |
+| `demo-histogram [secs]` | Latency distribution histogram | 60s |
+| `demo-slow [secs] [μs]` | Slow operations capture | 60s |
+| `demo-normal [secs]` | JSON monitoring output | 5 min |
+| `demo-stress [num]` | db_bench stress + anomaly detection | 2-3 min |
+| **Performance** | | |
+| `perf` | Full P-1~P-4 evaluation | ~4h |
+| `p3-stress [secs]` | Standalone P-3 event loss test | 5 min |
+| **Stability** | | |
+| `stability` | 48h S-1~S-4 stability test | 48h |
+| `stability-report [dir]` | Generate stability report | instant |
+| **Case Study** | | |
+| `case-1 [secs]` | IBD write pattern analysis | ~2h |
+| `case-2 [secs]` | Compaction storm capture | ~30 min |
+| **Utility** | | |
+| `bash` | Interactive shell | - |
+| `start-ckb` | Start CKB inside container | - |
+| `help` | Show usage | - |
+
+## RocksDB Operations Tracked
+
+| Op | RocksDB Function | Bytes/s Source |
+|----|-----------------|----------------|
+| GET | `rocksdb_get_pinned_cf` | uretprobe reads PinnableSlice size |
+| PUT | `rocksdb_transaction_put_cf` | entry probe reads vlen from arg(5) |
+| WRITE | `rocksdb_write` | — (WriteBatch internal) |
+| ITER_NEW | `rocksdb_create_iterator_cf` | — (no payload) |
+| TXN_COMMIT | `rocksdb_transaction_commit` | per-TID PUT accumulator |
 
 ## Project Structure
 
 ```
 ckb-probe/
-├── Cargo.toml                  # workspace root
-├── ckb-probe-common/           # shared type definitions
-│   └── src/lib.rs              # eBPF event types + symbol tier/category/registry
-├── ckb-probe/                  # main CLI binary
-│   └── src/
-│       ├── main.rs             # async entry point (tokio)
-│       ├── cli.rs              # clap CLI definitions (check/symbols)
-│       └── commands/
-│           ├── check.rs        # environment checks + eBPF validation + live event collection
-│           └── symbols.rs      # ELF symbol analysis engine
-├── ckb-probe-ebpf/             # eBPF kernel programs (no_std)
+├── ckb-probe/                  # Userspace CLI (Rust + tokio)
+│   └── src/commands/
+│       ├── check.rs            # Environment check + eBPF validation
+│       ├── symbols.rs          # ELF symbol analysis
+│       └── rocksdb.rs          # RocksDB monitoring + anomaly detection + S-4
+├── ckb-probe-ebpf/             # eBPF kernel programs (#![no_std])
 │   └── src/main.rs             # uprobe/kprobe/tracepoint BPF programs
-└── xtask/                      # build helper
-    └── src/main.rs             # cargo xtask build-ebpf / build
+├── ckb-probe-common/           # Shared type definitions
+├── docker/                     # Docker + all scripts
+│   ├── Dockerfile              # Three-stage build (nervos/ckb + rust + ubuntu)
+│   ├── entrypoint.sh           # Command dispatcher
+│   ├── env-check.sh            # Host prerequisite checker
+│   └── scripts/
+│       ├── perf/               # P-1~P-4 performance test scripts
+│       ├── stability/          # S-1~S-4 stability test + report generator
+│       ├── demo/               # 6 demo scripts
+│       └── case/               # 2 case study scripts
+├── docs/                       # Documentation (EN + 中文)
+└── .github/workflows/ci.yml    # CI: build + lint + script check
 ```
 
-## Symbol Tier Reference
+## Documentation
 
-| Tier | Source | Stability | Purpose |
-|------|------|--------|------|
-| Tier 1 | RocksDB C API (`extern "C"`) | Stable across versions | Primary uprobe targets |
-| Tier 2 | Rust cross-crate public functions | Hash suffix varies per build | Available in self-compiled builds |
-| Tier 3 | Crate-internal / inlined | Usually eliminated in release | Not suitable for uprobe |
+| Document | EN | 中文 |
+|----------|-----|------|
+| Getting Started | [EN](docs/getting-started_en.md) | [中文](docs/getting-started_zh.md) |
+| Test Infrastructure | [EN](docs/test-infrastructure_en.md) | [中文](docs/test-infrastructure_zh.md) |
+| Technical Deep Dive | [EN](docs/technical-deep-dive_en.md) | [中文](docs/technical-deep-dive_zh.md) |
+| Docker Quickstart | [EN](docs/docker-quickstart.md) | [中文](docs/docker-quickstart_zh.md) |
 
-## Environment Check Items
+## Verification Checklist
 
-| # | Check | Requirement |
-|---|-------|-------------|
-| 1 | Kernel version | >= 5.8 |
-| 2 | BPF config | CONFIG_BPF=y, CONFIG_BPF_SYSCALL=y, CONFIG_BPF_JIT=y |
-| 3 | BTF support | /sys/kernel/btf/vmlinux exists |
-| 4 | Permissions | root or CAP_BPF |
-| 5 | bpf() syscall | Available (not ENOSYS) |
-| 6 | uprobe support | uprobe_events file exists in tracefs |
-| 7 | CKB process | Running ckb process detected |
-| 8 | CKB symbols | Key RocksDB symbols found in binary (optional) |
+### Functional (F-1 ~ F-10)
 
-## Roadmap
+| # | Requirement | Status |
+|---|-------------|--------|
+| F-1 | `check` reports kernel/BTF/BPF with actionable hints | ✅ |
+| F-2 | `symbols` generates Tier 1/2/3 report + RocksDB linkage detection | ✅ |
+| F-3 | `rocksdb --pid` outputs real-time stats table at 1s intervals | ✅ |
+| F-4 | Five operations (GET/PUT/WRITE/ITER_NEW/TXN_COMMIT) tracked with QPS/avg/P50/P99/bytes | ✅ |
+| F-5 | `--slow --threshold` captures individual slow operations | ✅ |
+| F-6 | `--histogram` displays log2-bucket latency distribution | ✅ |
+| F-7 | EWMA anomaly detection triggers within 15s of synthetic spike | ✅ |
+| F-8 | `--json` outputs valid JSON parseable by jq | ✅ |
+| F-9 | Graceful shutdown on SIGINT/SIGTERM, clean BPF unload | ✅ |
+| F-10 | Graceful handling when CKB exits + auto-reconnect on restart | ✅ |
 
-- **Week 2** (done): `ckb-probe symbols` — binary symbol reconnaissance
-- **Week 3** (done): eBPF feasibility validation + live event collection + `ckb-probe check`
-- **Week 4** (next): RocksDB deep tracing — `ckb-probe rocksdb` with latency histograms, slow operation alerts, and real-time monitoring
+### Performance (P-1 ~ P-4)
+
+| # | Requirement | Result | Status |
+|---|-------------|--------|--------|
+| P-1 | CPU overhead ≤ 3% (relative) | +1.29% | ✅ |
+| P-2 | RSS ≤ 50 MB | 22.89 MB | ✅ |
+| P-3 | BPF event loss < 0.1% at 10K+/s | 0.0000% at 13K/s | ✅ |
+| P-4 | Sync degradation < 1% | -0.86% | ✅ |
+
+### Stability (S-1 ~ S-4)
+
+| # | Requirement | Status |
+|---|-------------|--------|
+| S-1 | 48h no crash/panic | Scripts ready |
+| S-2 | RSS growth ≤ 5 MB over 48h | Scripts ready |
+| S-3 | No BPF dmesg warnings | Scripts ready |
+| S-4 | Auto-reconnect on CKB restart | ✅ Verified |
+
+## Image Export
+
+```bash
+docker save ckb-probe:latest | gzip > ckb-probe-latest.tar.gz
+docker load < ckb-probe-latest.tar.gz   # on another machine
+```
 
 ## License
 
