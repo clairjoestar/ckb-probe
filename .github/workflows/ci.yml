@@ -1,0 +1,261 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  # Weekly CKB compatibility check (every Monday 08:00 UTC)
+  schedule:
+    - cron: '0 8 * * 1'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ── Build eBPF + userspace ─────────────────────────────────
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install nightly (for eBPF)
+        run: |
+          rustup install nightly
+          rustup component add rust-src --toolchain nightly
+
+      - name: Install bpf-linker
+        run: cargo install bpf-linker --locked
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang llvm libelf-dev zlib1g-dev pkg-config
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Build eBPF
+        run: cargo xtask build-ebpf --release
+
+      - name: Build userspace
+        run: cargo build --release
+
+  # ── Lint ────────────────────────────────────────────────────
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Install nightly (for eBPF)
+        run: |
+          rustup install nightly
+          rustup component add rust-src --toolchain nightly
+
+      - name: Install bpf-linker
+        run: cargo install bpf-linker --locked
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang llvm libelf-dev zlib1g-dev pkg-config
+
+      - name: Build eBPF (needed for clippy)
+        run: cargo xtask build-ebpf --release
+
+      - name: cargo fmt
+        run: cargo fmt --all -- --check
+
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+  # ── Script syntax check ────────────────────────────────────
+  scripts:
+    name: Shell scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Syntax check all .sh files
+        run: |
+          status=0
+          while IFS= read -r f; do
+            if bash -n "$f" 2>&1; then
+              echo "  ✅ $f"
+            else
+              echo "  ❌ $f"
+              status=1
+            fi
+          done < <(find docker/ -name "*.sh" -type f | sort)
+          exit $status
+
+      - name: Check shellcheck (advisory)
+        run: |
+          sudo apt-get update && sudo apt-get install -y shellcheck
+          find docker/ -name "*.sh" -type f -exec shellcheck -S warning {} + || true
+
+  # ── CKB version compatibility check ────────────────────────
+  # Fetches latest CKB release from nervosnetwork/ckb GitHub repo,
+  # runs symbol analysis to detect breaking changes.
+  # Triggered weekly (Monday 08:00 UTC) or manually.
+  ckb-compat:
+    name: CKB Compatibility
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install nightly (for eBPF)
+        run: |
+          rustup install nightly
+          rustup component add rust-src --toolchain nightly
+
+      - name: Install bpf-linker
+        run: cargo install bpf-linker --locked
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang llvm libelf-dev zlib1g-dev pkg-config jq
+
+      - name: Build ckb-probe
+        run: |
+          cargo xtask build-ebpf --release
+          cargo build --release
+
+      - name: Fetch latest CKB release from GitHub
+        id: ckb-release
+        run: |
+          echo "Fetching latest release from nervosnetwork/ckb..."
+          RELEASE_JSON=$(curl -sL https://api.github.com/repos/nervosnetwork/ckb/releases/latest)
+          CKB_TAG=$(echo "$RELEASE_JSON" | jq -r '.tag_name')
+          echo "Latest CKB release: $CKB_TAG"
+          echo "ckb_tag=$CKB_TAG" >> "$GITHUB_OUTPUT"
+
+          # Find the x86_64-unknown-linux-gnu tarball
+          DOWNLOAD_URL=$(echo "$RELEASE_JSON" | jq -r '
+            .assets[] |
+            select(.name | test("x86_64-unknown-linux-gnu")) |
+            select(.name | endswith(".tar.gz")) |
+            .browser_download_url
+          ' | head -1)
+
+          if [ -z "$DOWNLOAD_URL" ]; then
+            echo "::error::No x86_64 Linux binary found in CKB $CKB_TAG release"
+            exit 1
+          fi
+
+          echo "Downloading: $DOWNLOAD_URL"
+          curl -sL "$DOWNLOAD_URL" -o ckb-release.tar.gz
+          tar xzf ckb-release.tar.gz
+          CKB_BIN=$(find . -name "ckb" -type f -executable | grep -v ckb-probe | head -1)
+          cp "$CKB_BIN" ./ckb-test-binary
+          chmod +x ./ckb-test-binary
+          echo "CKB binary extracted:"
+          ./ckb-test-binary --version
+
+      - name: Symbol analysis
+        run: |
+          CKB_TAG="${{ steps.ckb-release.outputs.ckb_tag }}"
+          echo "=== Symbol Analysis for CKB $CKB_TAG ==="
+          ./target/release/ckb-probe symbols ./ckb-test-binary
+          echo ""
+          echo "=== JSON Summary ==="
+          ./target/release/ckb-probe symbols ./ckb-test-binary --json | jq '{
+            binary: .binary_path,
+            rocksdb_linkage: .rocksdb_linkage,
+            tier1_found: .summary.tier1_found,
+            tier1_tracked: .summary.tier1_tracked
+          }'
+
+      - name: Verify Tier 1 symbols
+        run: |
+          CKB_TAG="${{ steps.ckb-release.outputs.ckb_tag }}"
+          TIER1_FOUND=$(./target/release/ckb-probe symbols ./ckb-test-binary --json | jq '.summary.tier1_found')
+          echo "Tier 1 symbols found: $TIER1_FOUND / 20"
+          if [ "$TIER1_FOUND" -lt 10 ]; then
+            echo "::error::CKB $CKB_TAG has only $TIER1_FOUND Tier 1 symbols (minimum 10 required)"
+            exit 1
+          fi
+
+      - name: Verify 5 core probe targets
+        run: |
+          CKB_TAG="${{ steps.ckb-release.outputs.ckb_tag }}"
+          MISSING=0
+          for sym in rocksdb_get_pinned_cf rocksdb_transaction_put_cf rocksdb_write \
+                     rocksdb_create_iterator_cf rocksdb_transaction_commit; do
+            if ./target/release/ckb-probe symbols ./ckb-test-binary --json | \
+               jq -e ".tier1[] | select(.symbol == \"$sym\")" > /dev/null 2>&1; then
+              echo "  ✅ $sym"
+            else
+              echo "  ❌ $sym MISSING in CKB $CKB_TAG"
+              MISSING=$((MISSING + 1))
+            fi
+          done
+          if [ "$MISSING" -gt 0 ]; then
+            echo "::error::$MISSING core probe target symbols missing in CKB $CKB_TAG"
+            exit 1
+          fi
+
+      - name: Create issue on compatibility failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const tag = '${{ steps.ckb-release.outputs.ckb_tag }}';
+            const title = `CKB ${tag} compatibility issue detected`;
+            const body = [
+              `## CKB Compatibility Alert`,
+              ``,
+              `Weekly compatibility check failed for CKB \`${tag}\`.`,
+              ``,
+              `**Possible causes:**`,
+              `- RocksDB C API symbols renamed or removed`,
+              `- Binary stripped differently`,
+              `- RocksDB linkage method changed`,
+              ``,
+              `**Action required:**`,
+              `1. Download CKB ${tag} and run \`ckb-probe symbols\` locally`,
+              `2. Check which probe targets are missing`,
+              `3. Update \`MONITOR_PROBES\` in \`rocksdb.rs\` if symbol names changed`,
+              ``,
+              `Workflow run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
+            ].join('\n');
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'ckb-compat'
+            });
+            if (!issues.data.some(i => i.title === title)) {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+                labels: ['ckb-compat', 'bug']
+              });
+            }
