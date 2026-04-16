@@ -46,7 +46,7 @@ cd ckb-probe
 docker build -f docker/Dockerfile -t ckb-probe:latest .
 ```
 
-Build takes ~10-15 min. Image is ~163 MB and includes CKB binary, ckb-probe, db_bench, and all scripts.
+Build takes ~10-15 min. The two-stage image (~100 MB) bundles ckb-probe, db_bench, and all scripts. CKB binary is **not** included — it must be mounted from the host (see step 3) so uprobe attachment paths align with the target process exe.
 
 ### 2. Prepare CKB node
 
@@ -228,7 +228,7 @@ ckb-probe/
 │   └── src/main.rs             # uprobe/kprobe/tracepoint BPF programs
 ├── ckb-probe-common/           # Shared type definitions
 ├── docker/                     # Docker + all scripts
-│   ├── Dockerfile              # Three-stage build (nervos/ckb + rust + ubuntu)
+│   ├── Dockerfile              # Two-stage build (rust builder + ubuntu runtime)
 │   ├── entrypoint.sh           # Command dispatcher
 │   ├── env-check.sh            # Host prerequisite checker
 │   └── scripts/

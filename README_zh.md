@@ -46,7 +46,7 @@ cd ckb-probe
 docker build -f docker/Dockerfile -t ckb-probe:latest .
 ```
 
-构建约 10-15 分钟，镜像约 163 MB，包含 CKB binary、ckb-probe、db_bench 及全部脚本。
+构建约 10-15 分钟，两阶段镜像（约 100 MB）包含 ckb-probe、db_bench 及全部脚本。CKB binary **不打包进镜像**，运行时通过 bind mount 挂载宿主机 binary（见第 3 步）——uprobe 必须按宿主机 CKB 进程的 exe 路径挂载才能生效。
 
 ### 2. 准备 CKB 节点
 
@@ -228,7 +228,7 @@ ckb-probe/
 │   └── src/main.rs             # uprobe/kprobe/tracepoint BPF 程序
 ├── ckb-probe-common/           # 共享类型定义
 ├── docker/                     # Docker + 全部脚本
-│   ├── Dockerfile              # 三阶段构建（nervos/ckb + rust + ubuntu）
+│   ├── Dockerfile              # 两阶段构建（rust builder + ubuntu runtime）
 │   ├── entrypoint.sh           # 命令分发器
 │   ├── env-check.sh            # 宿主机前置检查
 │   └── scripts/
