@@ -811,11 +811,7 @@ fn print_histogram(attached: &[(u32, &str, bool)], cur: &[OpSnapshot], prev: &[O
             .skip(start_bucket)
         {
             let label = bucket_label(i);
-            let bar_len = if max_count > 0 {
-                (count * 40 / max_count) as usize
-            } else {
-                0
-            };
+            let bar_len = (count * 40).checked_div(max_count).unwrap_or(0) as usize;
             let bar: String = "█".repeat(bar_len);
             if count > 0 {
                 println!("    {:>8} │{:<40} {}", label, bar.bright_magenta(), count);

@@ -568,13 +568,7 @@ fn emit_terminal(report: &SymbolReport, args: &SymbolsArgs) -> Result<()> {
 
     // ── summary ────────────────────────────────────────────────────
     section("Summary");
-    let pct = |n: usize, d: usize| -> usize {
-        if d == 0 {
-            0
-        } else {
-            n * 100 / d
-        }
-    };
+    let pct = |n: usize, d: usize| -> usize { (n * 100).checked_div(d).unwrap_or(0) };
     println!(
         "  Tier 1:  {:>2} / {:<2}  ({:>3}%)  {}",
         r.summary.tier1_found,
