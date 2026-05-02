@@ -930,5 +930,4 @@ docker run --rm \
 
 Phase A (2h with-probe) + Phase B (2h baseline)，均从相同 tip 启动，自动对比 CPU / RSS / 事件丢失 / 同步速度。
 
----
-*所有输出数据采集于 2026-05-02，CKB v0.204.0 测试网节点，Linux 6.8.0-106-generic*
+
