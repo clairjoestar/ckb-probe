@@ -109,8 +109,13 @@ EV_LINES=0
 if [[ -f "$EV_FILE" ]]; then
     EV_LINES=$(($(wc -l < "$EV_FILE") - 1))
 fi
+# Fallback: count JSON objects in probe-json.log if events.tsv is empty
+JSON_OBJECTS=0
+if [[ $EV_LINES -le 0 && -f "$PROBE_JSON" && -s "$PROBE_JSON" ]] && command -v jq &>/dev/null; then
+    JSON_OBJECTS=$(jq -r '.timestamp' "$PROBE_JSON" 2>/dev/null | wc -l)
+fi
 
-log "Data points: timeseries=$TS_LINES, events=$EV_LINES"
+log "Data points: timeseries=$TS_LINES, events=$EV_LINES, json_objects=$JSON_OBJECTS"
 
 # ═══════════════════════════════════════════════════════════════════
 # Parse verdict
@@ -156,6 +161,7 @@ GNUEOF
 generate_ascii_chart() {
     local title="$1"
     local col="$2"    # column number (1-indexed)
+    local filter="${3:-}"  # optional: awk filter expression applied before extracting column
     local width=60
     local height=15
 
@@ -163,8 +169,14 @@ generate_ascii_chart() {
     echo "$title"
     echo ""
 
-    # Extract column data (skip header)
-    tail -n +2 "$TS_FILE" | cut -f"$col" | awk -v w=$width -v h=$height '
+    # Extract column data (skip header), optionally filtering invalid rows
+    local _chart_data
+    if [[ -n "$filter" ]]; then
+        _chart_data=$(tail -n +2 "$TS_FILE" | awk -F'\t' "$filter" | cut -f"$col")
+    else
+        _chart_data=$(tail -n +2 "$TS_FILE" | cut -f"$col")
+    fi
+    echo "$_chart_data" | awk -v w=$width -v h=$height '
     BEGIN { n=0 }
     { a[n]=$1+0; n++ }
     END {
@@ -297,8 +309,9 @@ fi 2>/dev/null || true
 if [[ $TS_LINES -gt 0 ]]; then
     PROBE_CPU_STATS=$(tail -n +2 "$TS_FILE" | cut -f2 | compute_stats)
     PROBE_RSS_STATS=$(tail -n +2 "$TS_FILE" | cut -f3 | compute_stats)
-    CKB_CPU_STATS=$(tail -n +2 "$TS_FILE" | cut -f4 | compute_stats)
-    CKB_RSS_STATS=$(tail -n +2 "$TS_FILE" | cut -f5 | compute_stats)
+    # Filter out rows where CKB process was down (cpu<=0 or rss<=0, e.g. during S-4 restart)
+    CKB_CPU_STATS=$(tail -n +2 "$TS_FILE" | awk -F'\t' '$5+0>0 && $4+0>=0 {print $4}' | compute_stats)
+    CKB_RSS_STATS=$(tail -n +2 "$TS_FILE" | awk -F'\t' '$5+0>0 {print $5}' | compute_stats)
 else
     PROBE_CPU_STATS="0 0 0 0 0"
     PROBE_RSS_STATS="0 0 0 0 0"
@@ -351,6 +364,24 @@ compute_event_fidelity() {
                 else printf "| %s | %d | %d | %.1f |\n", op, n, sum, sum/n
             }'
         done
+    elif [[ -f "$PROBE_JSON" ]] && [[ -s "$PROBE_JSON" ]] && command -v jq &>/dev/null; then
+        echo "| Operation | Total Samples | Avg QPS | Avg Latency (us) | Avg P99 (us) |"
+        echo "|-----------|--------------|---------|------------------|--------------|"
+        jq -r '.operations | to_entries[] | [.key, .value.qps, .value.avg_us, .value.p99_us] | @tsv' \
+            "$PROBE_JSON" 2>/dev/null | awk -F'\t' '
+        {
+            op=$1; n[op]++; qps[op]+=$2; lat[op]+=$3; p99[op]+=$4
+        }
+        END {
+            split("GET PUT WRITE ITER_NEW TXN_COMMIT", ops, " ")
+            for(i=1; i<=5; i++) {
+                o=ops[i]
+                if(n[o]>0)
+                    printf "| %s | %d | %.1f | %.1f | %.1f |\n", o, n[o], qps[o]/n[o], lat[o]/n[o], p99[o]/n[o]
+                else
+                    printf "| %s | 0 | 0 | 0 | 0 |\n", o
+            }
+        }'
     else
         echo "(no event data)"
     fi
@@ -375,15 +406,17 @@ compute_event_fidelity() {
     echo "### CKB Sync Speed"
     echo ""
     if [[ -f "$TIP_FILE" ]] && [[ $(wc -l < "$TIP_FILE") -gt 1 ]]; then
-        tail -n +2 "$TIP_FILE" | awk -F'\t' '
+        # Filter out rows where tip_height=0 (CKB process was down)
+        tail -n +2 "$TIP_FILE" | awk -F'\t' '$2+0>0' | awk -F'\t' '
         { n++; sum+=$4; if($4+0>max) max=$4+0; if(n==1 || $4+0<min) min=$4+0
-          first_h=$2; if(n==1) start_h=$2 }
+          last_h=$2; if(n==1) start_h=$2 }
         END {
+            if(n==0) { print "(no valid sync data)"; exit }
             printf "| Metric | Value |\n|--------|-------|\n"
             printf "| Samples | %d |\n", n
             printf "| Start height | %s |\n", start_h
-            printf "| End height | %s |\n", first_h
-            printf "| Total blocks synced | %d |\n", first_h - start_h
+            printf "| End height | %s |\n", last_h
+            printf "| Total blocks synced | %d |\n", last_h - start_h
             printf "| Avg blocks/min | %.1f |\n", sum/n
             printf "| Max blocks/min | %.1f |\n", max
             printf "| Min blocks/min | %.1f |\n", min
@@ -401,32 +434,64 @@ generate_latency_histogram() {
 
     # Try histogram.log first (full log2 distribution from --histogram mode)
     if [[ -f "$HIST_LOG" ]] && grep -q "$op" "$HIST_LOG" 2>/dev/null; then
-        # Extract the last histogram block for this op from the histogram log
-        # The histogram output has lines like: "  16μs -  32μs  |████████  1234"
-        # Extract all histogram data for this op across the full run
-        echo "  (from ckb-probe --histogram, aggregated over full run)"
+        echo "  (from ckb-probe --histogram, last snapshot)"
         echo ""
 
-        # Parse raw histogram lines — look for op header then its buckets
-        awk -v op="$op" '
-        /── .* Latency Distribution/ { current_op = ""; next }
-        $0 ~ op { capturing = 1; next }
-        capturing && /^$/ { capturing = 0 }
-        capturing && /\|/ {
-            # Lines like: "    1μs -     2μs  |##  123"
-            gsub(/[μs,]/, "", $0)
-            # Just count occurrences per bucket across all frames
-            match($0, /\|[#  ]+([0-9]+)/, arr)
-        }
-        ' "$HIST_LOG" 2>/dev/null || true
+        # The histogram.log contains TUI frames with ANSI escape sequences and
+        # Unicode box-drawing chars.  Extract the last frame (split by ESC[2J),
+        # strip control/decorative characters, then parse bucket lines.
+        # 1. Take last ~5000 bytes (last frame)
+        # 2. Strip ANSI escape sequences and Unicode box/block drawing chars
+        # 3. Grep for the target op's histogram section
+        local _hist_clean
+        _hist_clean=$(tail -c 8000 "$HIST_LOG" \
+            | sed 's/\x1b\[[0-9;]*[A-Za-z]//g' \
+            | sed 's/[\xe2\x94\x80-\xe2\x95\xbf]//g; s/[\xe2\x96\x80-\xe2\x96\x9f]//g; s/[\xe2\x96\x88]//g' \
+            | LC_ALL=C sed 's/[^[:print:][:space:]]//g')
 
-        # Fallback: just show the last frame's histogram for this op
-        echo ""
-        awk -v op="$op" '
-        /\[2J\[H/ { buf = "" }
-        { buf = buf $0 "\n" }
-        END { print buf }
-        ' "$HIST_LOG" | grep -A 30 "$op" | head -25 || echo "  (could not parse histogram frames)"
+        # Extract bucket lines for this op
+        local _in_section=false
+        local _found=false
+        local _buckets=""
+        local _max_count=0
+        while IFS= read -r _line; do
+            _stripped=$(echo "$_line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+            if echo "$_stripped" | grep -qi "^${op}[[:space:]]*latency distribution"; then
+                _in_section=true
+                _found=true
+                echo "  $op latency distribution:"
+                continue
+            fi
+            if [[ "$_in_section" == "true" ]]; then
+                # Stop at empty line or next section
+                if [[ -z "$_stripped" ]] || (echo "$_stripped" | grep -qi "latency distribution" && ! echo "$_stripped" | grep -qi "$op"); then
+                    break
+                fi
+                # Extract bucket: label (e.g. "4μs" or "4ms") and trailing count
+                local _label _count
+                _label=$(echo "$_stripped" | grep -oP '^\d+\S*s' || true)
+                _count=$(echo "$_stripped" | grep -oP '\d+\s*$' | tr -d '[:space:]' || true)
+                if [[ -n "$_label" && -n "$_count" ]]; then
+                    _buckets="${_buckets}${_label}\t${_count}\n"
+                    if [[ $_count -gt $_max_count ]]; then _max_count=$_count; fi
+                fi
+            fi
+        done <<< "$_hist_clean"
+
+        if [[ "$_found" == "true" && -n "$_buckets" ]]; then
+            echo -e "$_buckets" | while IFS=$'\t' read -r _bl _bc; do
+                [[ -z "$_bl" ]] && continue
+                local _bar_len=0
+                if [[ $_max_count -gt 0 ]]; then
+                    _bar_len=$(( _bc * 40 / _max_count ))
+                fi
+                local _bar=""
+                for (( _i=0; _i<_bar_len; _i++ )); do _bar="${_bar}#"; done
+                printf "  %10s |%-40s %6d\n" "$_bl" "$_bar" "$_bc"
+            done
+        elif [[ "$_found" == "false" ]]; then
+            echo "  (no histogram data for $op)"
+        fi
         return
     fi
 
@@ -475,75 +540,63 @@ generate_latency_histogram() {
 # Case study 1: IBD write pattern (first 2h)
 # ═══════════════════════════════════════════════════════════════════
 generate_ibd_study() {
-    if [[ $EV_LINES -le 0 ]]; then
+    if [[ $EV_LINES -gt 0 ]]; then
+        # Use events.tsv if available
+        local first_ts
+        first_ts=$(tail -n +2 "$EV_FILE" | head -1 | cut -f1)
+        if [[ -z "$first_ts" ]]; then
+            echo "No events found."
+            return
+        fi
+        local first_epoch
+        first_epoch=$(date -d "$first_ts" +%s 2>/dev/null || echo "0")
+        local cutoff_epoch=$((first_epoch + 7200))
+
+        echo "First 2 hours of data (potential IBD phase):"
+        echo ""
+        echo "| Time Window | Op | Avg QPS | Avg Latency (us) | Avg P99 (us) |"
+        echo "|-------------|-----|---------|------------------|--------------|"
+
+        for op in PUT WRITE; do
+            tail -n +2 "$EV_FILE" | awk -F'\t' -v op="$op" -v cutoff="$cutoff_epoch" '
+            BEGIN { OFS="\t" }
+            {
+                ts = $1
+                cmd = "date -d \"" ts "\" +%s 2>/dev/null"
+                cmd | getline epoch
+                close(cmd)
+            }
+            $2==op && epoch+0 <= cutoff {
+                n++; qps_sum += $3; lat_sum += $4; p99_sum += $6
+            }
+            END {
+                if(n==0) printf "| 0-2h | %s | 0 | 0 | 0 |\n", op
+                else printf "| 0-2h | %s | %.1f | %.1f | %.1f |\n", op, qps_sum/n, lat_sum/n, p99_sum/n
+            }' 2>/dev/null || echo "| 0-2h | $op | (parse error) | - | - |"
+        done
+    elif [[ -f "$PROBE_JSON" ]] && [[ -s "$PROBE_JSON" ]] && command -v jq &>/dev/null; then
+        # Fallback: parse probe-json.log directly with jq (first 720 objects ≈ 2h at 10s interval)
+        echo "First 2 hours of data (potential IBD phase, from probe JSON):"
+        echo ""
+        echo "| Time Window | Op | Avg QPS | Avg Latency (us) | Avg P99 (us) |"
+        echo "|-------------|-----|---------|------------------|--------------|"
+
+        # Extract first ~720 JSON objects (2h at 10s sampling)
+        for op in PUT WRITE GET ITER_NEW TXN_COMMIT; do
+            jq -r --arg op "$op" '
+                .operations[$op] // empty |
+                [.qps, .avg_us, .p99_us] | @tsv
+            ' "$PROBE_JSON" 2>/dev/null | awk -F'\t' -v op="$op" '
+            NR <= 720 { n++; qps+=$1; lat+=$2; p99+=$3 }
+            END {
+                if(n==0) printf "| 0-2h | %s | 0 | 0 | 0 |\n", op
+                else printf "| 0-2h | %s | %.1f | %.1f | %.1f |\n", op, qps/n, lat/n, p99/n
+            }'
+        done
+    else
         echo "No event data available for IBD analysis."
         return
     fi
-
-    # Get first timestamp
-    local first_ts
-    first_ts=$(tail -n +2 "$EV_FILE" | head -1 | cut -f1)
-    if [[ -z "$first_ts" ]]; then
-        echo "No events found."
-        return
-    fi
-
-    # Convert to epoch and compute 2h window
-    local first_epoch
-    first_epoch=$(date -d "$first_ts" +%s 2>/dev/null || echo "0")
-    local cutoff_epoch=$((first_epoch + 7200))
-
-    echo "First 2 hours of data (potential IBD phase):"
-    echo ""
-    echo "| Time Window | Op | Avg QPS | Avg Latency (us) | Avg P99 (us) |"
-    echo "|-------------|-----|---------|------------------|--------------|"
-
-    for op in PUT WRITE; do
-        tail -n +2 "$EV_FILE" | awk -F'\t' -v op="$op" -v cutoff="$cutoff_epoch" '
-        BEGIN { OFS="\t" }
-        {
-            ts = $1
-            cmd = "date -d \"" ts "\" +%s 2>/dev/null"
-            cmd | getline epoch
-            close(cmd)
-        }
-        $2==op && epoch+0 <= cutoff {
-            n++; qps_sum += $3; lat_sum += $4; p99_sum += $6
-        }
-        END {
-            if(n==0) printf "| 0-2h | %s | 0 | 0 | 0 |\n", op
-            else printf "| 0-2h | %s | %.1f | %.1f | %.1f |\n", op, qps_sum/n, lat_sum/n, p99_sum/n
-        }' 2>/dev/null || echo "| 0-2h | $op | (parse error) | - | - |"
-    done
-
-    echo ""
-    echo "PUT/WRITE throughput evolution (30-min windows):"
-    echo ""
-    echo "| Window | PUT avg QPS | WRITE avg QPS |"
-    echo "|--------|-------------|---------------|"
-
-    for window in 0 1 2 3; do
-        local w_start=$((first_epoch + window * 1800))
-        local w_end=$((w_start + 1800))
-        local put_qps write_qps
-        put_qps=$(tail -n +2 "$EV_FILE" | awk -F'\t' -v ws="$w_start" -v we="$w_end" '
-        $2=="PUT" {
-            cmd = "date -d \"" $1 "\" +%s 2>/dev/null"
-            cmd | getline ep
-            close(cmd)
-            if(ep+0 >= ws && ep+0 < we) { n++; s+=$3 }
-        }
-        END { if(n>0) printf "%.1f", s/n; else print "0" }' 2>/dev/null || echo "0")
-        write_qps=$(tail -n +2 "$EV_FILE" | awk -F'\t' -v ws="$w_start" -v we="$w_end" '
-        $2=="WRITE" {
-            cmd = "date -d \"" $1 "\" +%s 2>/dev/null"
-            cmd | getline ep
-            close(cmd)
-            if(ep+0 >= ws && ep+0 < we) { n++; s+=$3 }
-        }
-        END { if(n>0) printf "%.1f", s/n; else print "0" }' 2>/dev/null || echo "0")
-        echo "| ${window}:00-${window}:30 | $put_qps | $write_qps |"
-    done
 }
 
 # ═══════════════════════════════════════════════════════════════════
@@ -573,39 +626,20 @@ generate_anomaly_study() {
     echo "Sample anomaly events:"
     echo ""
     echo "\`\`\`"
-    python3 -c "
-import json, sys
-
-found = 0
-buf = ''
-depth = 0
-for line in open('$PROBE_JSON'):
-    buf += line
-    depth += line.count('{') - line.count('}')
-    if depth == 0 and buf.strip():
-        try:
-            obj = json.loads(buf)
-            anomalies = obj.get('anomalies', [])
-            if anomalies:
-                for a in anomalies:
-                    found += 1
-                    print(f\"  [{a.get('time','')}] {a.get('operation','?')}: \"
-                          f\"avg={a.get('current_avg_us',0):.1f}us \"
-                          f\"(baseline={a.get('baseline_avg_us',0):.1f}us, \"
-                          f\"{a.get('multiplier',0):.1f}x) \"
-                          f\"p99={a.get('current_p99_us',0):.1f}us \"
-                          f\"trigger={a.get('trigger','')}\")
-                    if found >= 10:
-                        break
-        except json.JSONDecodeError:
-            pass
-        buf = ''
-        if found >= 10:
-            break
-
-if found == 0:
-    print('  (anomaly markers found but could not parse details)')
-" 2>/dev/null || echo "  (could not parse anomaly details)"
+    if command -v jq &>/dev/null; then
+        local _anomaly_output
+        _anomaly_output=$(jq -r '
+            select(.anomalies | length > 0) | .anomalies[] |
+            "  [\(.time // "")] \(.operation // "?"): avg=\(.current_avg_us // 0)us (baseline=\(.baseline_avg_us // 0)us, \(.multiplier // 0)x) p99=\(.current_p99_us // 0)us trigger=\(.trigger // "")"
+        ' "$PROBE_JSON" 2>/dev/null | awk 'NR<=10')
+        if [[ -n "$_anomaly_output" ]]; then
+            echo "$_anomaly_output"
+        else
+            echo "  (anomaly markers found but could not parse details)"
+        fi
+    else
+        echo "  (jq not available for anomaly parsing)"
+    fi
     echo "\`\`\`"
 }
 
@@ -632,7 +666,7 @@ cat <<EOF
 | CPU | $CPU_INFO (${CPU_CORES:-?} cores) |
 | RAM | $RAM_INFO |
 | Data points (timeseries) | $TS_LINES |
-| Data points (events) | $EV_LINES |
+| Data points (events) | $( if [[ $EV_LINES -gt 0 ]]; then echo "$EV_LINES"; elif [[ $JSON_OBJECTS -gt 0 ]]; then echo "$JSON_OBJECTS (from JSON)"; else echo "0"; fi ) |
 
 ## 2. S-1 through S-4 Verdict
 
@@ -711,7 +745,7 @@ else
 
     echo "### CKB node CPU%"
     if [[ $TS_LINES -gt 0 ]]; then
-        generate_ascii_chart "CKB CPU%" 4
+        generate_ascii_chart "CKB CPU%" 4 '$5+0>0'
     else
         echo "(no data)"
     fi
@@ -723,7 +757,7 @@ if [[ "$HAS_GNUPLOT" != "true" && -f "$TIP_FILE" ]] && [[ $(wc -l < "$TIP_FILE")
     echo "### CKB Sync Speed (blocks/min)"
     echo ""
     echo '```'
-    tail -n +2 "$TIP_FILE" | cut -f4 | awk -v w=60 -v h=12 '
+    tail -n +2 "$TIP_FILE" | awk -F'\t' '$2+0>0 {print $4}' | awk -v w=60 -v h=12 '
     { a[n]=$1+0; n++ }
     END {
         if(n==0) { print "(no data)"; exit }

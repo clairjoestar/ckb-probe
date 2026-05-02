@@ -868,6 +868,19 @@ fn print_json(
         } else {
             m.insert("bytes_per_sec".into(), serde_json::Value::Null);
         }
+        if args.histogram {
+            let buckets: Vec<_> = delta_hist
+                .iter()
+                .enumerate()
+                .filter(|(_, &c)| c > 0)
+                .map(|(i, &c)| {
+                    let lo_ns = if i == 0 { 0u64 } else { 1u64 << i };
+                    let lo_us = lo_ns as f64 / 1000.0;
+                    serde_json::json!({ "ge_us": round2(lo_us), "count": c })
+                })
+                .collect();
+            m.insert("histogram".into(), serde_json::json!(buckets));
+        }
         ops.insert(display.to_string(), serde_json::Value::Object(m));
     }
 

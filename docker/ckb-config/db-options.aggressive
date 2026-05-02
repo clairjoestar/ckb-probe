@@ -1,0 +1,23 @@
+# Aggressive RocksDB tuning for ckb-probe case study (NOT for production!)
+#
+# These overrides make compaction trigger much more often than CKB defaults,
+# so case-2 (compaction storm) can be reproduced reliably even on a synced
+# node with steady-state workload.
+
+[DBOptions]
+bytes_per_sync=1048576
+max_background_jobs=1
+max_total_wal_size=134217728
+keep_log_file_num=32
+
+[CFOptions "default"]
+level_compaction_dynamic_level_bytes=true
+write_buffer_size=4194304
+min_write_buffer_number_to_merge=1
+max_write_buffer_number=2
+max_write_buffer_size_to_maintain=-1
+level0_file_num_compaction_trigger=1
+level0_slowdown_writes_trigger=2
+level0_stop_writes_trigger=3
+target_file_size_base=1048576
+max_bytes_for_level_base=10485760

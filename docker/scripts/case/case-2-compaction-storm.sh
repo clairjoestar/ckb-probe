@@ -44,24 +44,20 @@ trap cleanup EXIT INT TERM
 
 # ── 1) Apply aggressive tuning ────────────────────────────────
 log "===== case-2: compaction storm capture ====="
-TUNING=/opt/ckb-config/ckb.toml.aggressive
-TARGET=$CKB_DATA/ckb.toml
-BACKUP=$CKB_DATA/ckb.toml.backup-case2
+TUNING=/opt/ckb-config/db-options.aggressive
+TARGET=$CKB_DATA/default.db-options
+BACKUP=$CKB_DATA/default.db-options.backup-case2
 
-if [[ ! -f "$TARGET" ]]; then
+if [[ ! -f "$CKB_DATA/ckb.toml" ]]; then
     log "no ckb.toml found, running ckb init"
     "$CKB_BIN" init --chain testnet -C "$CKB_DATA"
 fi
 
-log "backing up current ckb.toml -> $BACKUP"
+log "backing up current db-options -> $BACKUP"
 cp "$TARGET" "$BACKUP"
 
-log "appending aggressive RocksDB tuning to $TARGET"
-{
-    echo
-    echo "# === case-2 aggressive tuning (auto-applied $(date '+%F %T')) ==="
-    grep -v '^#' "$TUNING" | grep -v '^$'
-} >> "$TARGET"
+log "replacing db-options with aggressive RocksDB tuning"
+cp "$TUNING" "$TARGET"
 
 # ── 2) Restart CKB ─────────────────────────────────────────────
 if pgrep -x ckb >/dev/null; then
@@ -74,7 +70,7 @@ log "restarting ckb with aggressive tuning"
 nohup "$CKB_BIN" run -C "$CKB_DATA" > /var/log/ckb.log 2>&1 &
 disown
 
-for _ in {1..30}; do
+for _ in {1..150}; do
     if curl -sf -X POST "$CKB_RPC" \
         -H 'Content-Type: application/json' \
         -d '{"id":1,"jsonrpc":"2.0","method":"get_tip_block_number","params":[]}' \
@@ -126,8 +122,8 @@ kill -INT "$PROBE_PID" 2>/dev/null || true
 sleep 3
 PROBE_PID=""
 
-# Restore original ckb.toml
-log "restoring original ckb.toml"
+# Restore original db-options
+log "restoring original db-options"
 cp "$BACKUP" "$TARGET"
 
 ANOMALY_COUNT=$(grep -c "ANOMALY DETECTED" "$PROBE_LOG" 2>/dev/null || echo 0)
@@ -141,7 +137,7 @@ SLOW_COUNT=$(grep -cE "WRITE.*[0-9],[0-9]+μs" "$PROBE_LOG" 2>/dev/null || echo 
     echo
     echo "Setup"
     echo "  tuning applied : $TUNING (low L0 trigger, 1 background job, 4MB memtable)"
-    echo "  ckb.toml.bak   : $BACKUP (restored at end)"
+    echo "  db-options.bak  : $BACKUP (restored at end)"
     echo "  max wait       : ${MAX_WAIT}s"
     echo
     echo "Result"

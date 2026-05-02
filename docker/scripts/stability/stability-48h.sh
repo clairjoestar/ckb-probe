@@ -326,41 +326,64 @@ while true; do
     fi
 
     # Restart secondary probes if they died (non-critical, don't affect S-1)
-    if ! kill -0 "$SLOW_PID" 2>/dev/null; then
-        log "WARNING: ckb-probe #2 (slow) died, restarting..."
-        "$PROBE_BIN" rocksdb --binary "$CKB_BIN" --pid "$CKB_PID" \
-            --slow --threshold 1000 --interval "$SAMPLE_SECS" \
-            >> "$SLOW_LOG" 2>> "$OUTDIR/probe-slow-stderr.log" &
-        SLOW_PID=$!; BG_PIDS+=("$SLOW_PID")
-    fi
-    if ! kill -0 "$HIST_PID" 2>/dev/null; then
-        log "WARNING: ckb-probe #3 (histogram) died, restarting..."
-        "$PROBE_BIN" rocksdb --binary "$CKB_BIN" --pid "$CKB_PID" \
-            --histogram --interval 30 \
-            >> "$HIST_LOG" 2>> "$OUTDIR/probe-hist-stderr.log" &
-        HIST_PID=$!; BG_PIDS+=("$HIST_PID")
+    # Only restart if CKB_PID is valid (probes need a valid target)
+    if [[ -n "$CKB_PID" ]] && [[ -d "/proc/$CKB_PID" ]]; then
+        if ! kill -0 "$SLOW_PID" 2>/dev/null; then
+            log "WARNING: ckb-probe #2 (slow) died, restarting with CKB PID=$CKB_PID..."
+            "$PROBE_BIN" rocksdb --binary "$CKB_BIN" --pid "$CKB_PID" \
+                --slow --threshold 1000 --interval "$SAMPLE_SECS" \
+                >> "$SLOW_LOG" 2>> "$OUTDIR/probe-slow-stderr.log" &
+            SLOW_PID=$!; BG_PIDS+=("$SLOW_PID")
+        fi
+        if ! kill -0 "$HIST_PID" 2>/dev/null; then
+            log "WARNING: ckb-probe #3 (histogram) died, restarting with CKB PID=$CKB_PID..."
+            "$PROBE_BIN" rocksdb --binary "$CKB_BIN" --pid "$CKB_PID" \
+                --histogram --interval 30 \
+                >> "$HIST_LOG" 2>> "$OUTDIR/probe-hist-stderr.log" &
+            HIST_PID=$!; BG_PIDS+=("$HIST_PID")
+        fi
     fi
 
     # ── Resource metrics ───────────────────────────────────────
     NOW_NS=$(date +%s%N)
     CUR_PROBE_TICKS=$(get_cpu_ticks "$PROBE_PID")
-    CUR_CKB_TICKS=$(get_cpu_ticks "$CKB_PID")
 
     DELTA_NS=$((NOW_NS - PREV_TIME_NS))
     if [[ $DELTA_NS -gt 0 ]]; then
         DELTA_PROBE=$((CUR_PROBE_TICKS - PREV_PROBE_TICKS))
-        DELTA_CKB=$((CUR_CKB_TICKS - PREV_CKB_TICKS))
-        # CPU% = (delta_ticks / CLK_TCK) / (delta_time_s) * 100
-        # Using integer math with scaling: pct = delta_ticks * 100 * 1e9 / (CLK_TCK * delta_ns)
         PROBE_CPU=$(awk "BEGIN {printf \"%.2f\", $DELTA_PROBE * 100.0 / $CLK_TCK / ($DELTA_NS / 1000000000.0)}")
-        CKB_CPU=$(awk "BEGIN {printf \"%.2f\", $DELTA_CKB * 100.0 / $CLK_TCK / ($DELTA_NS / 1000000000.0)}")
     else
         PROBE_CPU="0.00"
-        CKB_CPU="0.00"
     fi
-
     PROBE_RSS=$(get_rss_kb "$PROBE_PID")
-    CKB_RSS=$(get_rss_kb "$CKB_PID")
+
+    # CKB metrics: validate PID is alive; if not, try to re-find it
+    if [[ -n "$CKB_PID" ]] && [[ -d "/proc/$CKB_PID" ]]; then
+        CUR_CKB_TICKS=$(get_cpu_ticks "$CKB_PID")
+        if [[ $DELTA_NS -gt 0 ]]; then
+            DELTA_CKB=$((CUR_CKB_TICKS - PREV_CKB_TICKS))
+            # Clamp negative delta (happens on PID change)
+            if [[ $DELTA_CKB -lt 0 ]]; then DELTA_CKB=0; fi
+            CKB_CPU=$(awk "BEGIN {printf \"%.2f\", $DELTA_CKB * 100.0 / $CLK_TCK / ($DELTA_NS / 1000000000.0)}")
+        else
+            CKB_CPU="0.00"
+        fi
+        CKB_RSS=$(get_rss_kb "$CKB_PID")
+    else
+        # CKB process not found — try to re-detect
+        CKB_PID=$(pgrep -x ckb 2>/dev/null | head -1) || true
+        if [[ -n "$CKB_PID" ]] && [[ -d "/proc/$CKB_PID" ]]; then
+            log "Re-detected CKB PID: $CKB_PID"
+            CUR_CKB_TICKS=$(get_cpu_ticks "$CKB_PID")
+            PREV_CKB_TICKS=$CUR_CKB_TICKS
+            CKB_CPU="0.00"
+            CKB_RSS=$(get_rss_kb "$CKB_PID")
+        else
+            CUR_CKB_TICKS=0
+            CKB_CPU="0.00"
+            CKB_RSS="0"
+        fi
+    fi
 
     echo -e "${NOW_TS}\t${PROBE_CPU}\t${PROBE_RSS}\t${CKB_CPU}\t${CKB_RSS}" >> "$TS_FILE"
 
@@ -449,7 +472,7 @@ except: print(0)" 2>/dev/null || echo "0")
     # ── S-3: Periodic dmesg BPF check ─────────────────────────
     if [[ $((NOW_EPOCH - LAST_DMESG_CHECK)) -ge $DMESG_CHECK_INTERVAL ]]; then
         LAST_DMESG_CHECK=$NOW_EPOCH
-        NEW_BPF_MSGS=$(dmesg 2>/dev/null | grep -iE "bpf|ebpf" | wc -l)
+        NEW_BPF_MSGS=$(dmesg 2>/dev/null | grep -iE "bpf|ebpf" | wc -l || true)
         if [[ $NEW_BPF_MSGS -gt $DMESG_START_LINES ]]; then
             DIFF_COUNT=$((NEW_BPF_MSGS - DMESG_START_LINES))
             log "S-3 WARNING: $DIFF_COUNT new BPF-related dmesg messages detected"
@@ -532,14 +555,22 @@ except: print(0)" 2>/dev/null || echo "0")
             log "S-4: FAIL - $S4_REASON"
         fi
 
-        # Update CKB_PID for continued monitoring
-        sleep 5
-        CKB_PID=$(pgrep -x ckb 2>/dev/null | head -1) || true
+        # Update CKB_PID for continued monitoring (retry up to 30s)
+        CKB_PID=""
+        for _retry in $(seq 1 30); do
+            sleep 1
+            CKB_PID=$(pgrep -x ckb 2>/dev/null | head -1) || true
+            if [[ -n "$CKB_PID" ]] && [[ -d "/proc/$CKB_PID" ]]; then
+                break
+            fi
+            CKB_PID=""
+        done
         if [[ -z "$CKB_PID" ]]; then
-            log "WARNING: Cannot find new CKB PID after restart"
+            log "WARNING: Cannot find new CKB PID after restart (tried 30s)"
         else
-            log "New CKB PID: $CKB_PID"
+            log "New CKB PID: $CKB_PID (found after ${_retry}s)"
             PREV_CKB_TICKS=$(get_cpu_ticks "$CKB_PID")
+            PREV_TIME_NS=$(date +%s%N)
         fi
     fi
 
