@@ -25,3 +25,10 @@ official-release*.json
 self-compiled*.txt
 official-release*.txt
 report-*.md
+weekly-*.md
+REPORT-*.txt
+midterm-*.md
+CASE_*.md
+STABILITY-*.md
+STABILITY-*.txt
+main_proj.md

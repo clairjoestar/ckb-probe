@@ -1,31 +1,31 @@
-# CKB-Probe 演示流程说明
+# CKB-Probe Demo Walkthrough
 
-> **范围：仅限 CKB 测试网**
+> **Scope: CKB testnet only**
 >
-> 本文档覆盖 ckb-probe 的五个核心演示步骤，每步附完整终端输出、关键命令说明和输出解读。
-> 所有输出均为真实运行数据（2026-05-02，CKB v0.204.0 测试网节点）。
+> This document covers five core demo steps of ckb-probe, each with complete terminal output, key command explanations, and output interpretation.
+> All outputs are real data (2026-05-02, CKB v0.204.0 testnet node).
 
 ---
 
-## 调整说明
+## Design Note
 
-本文档替代原计划的演示视频。文字报告在以下方面对评审者更为友好：
-- 评审者可以直接复制报告中的命令进行复现，不需要反复拖动视频进度条
-- 终端输出配合文字解读比视频旁白更容易精确定位到具体的输出字段和数值
-- 报告本身可以作为项目文档的一部分长期保留，便于后续版本更新时同步修改
-- 视频一旦录制后修改成本较高，而文档可以随项目迭代
+This document replaces the originally planned demo video. Written reports are more reviewer-friendly:
+- Reviewers can copy commands directly for reproduction without scrubbing through video
+- Terminal output with written interpretation is easier to pinpoint specific fields and values
+- The report can be maintained as part of project documentation, updated alongside code
+- Videos are expensive to re-record; documents can iterate with the project
 
 ---
 
-## 前置条件
+## Prerequisites
 
 ```bash
-# 系统要求
-# - Linux 内核 >= 5.8 (BTF 支持)
-# - root 权限 (eBPF 需要 CAP_BPF + CAP_SYS_ADMIN)
-# - CKB 测试网节点运行中
+# System requirements
+# - Linux kernel >= 5.8 (BTF support)
+# - root privileges (eBPF requires CAP_BPF + CAP_SYS_ADMIN)
+# - CKB testnet node running
 
-# Docker 方式运行 (推荐)
+# Docker mode (recommended)
 docker run --rm --privileged --pid host \
   -v /sys/kernel/debug:/sys/kernel/debug:ro \
   -v /sys/kernel/btf:/sys/kernel/btf:ro \
@@ -33,22 +33,22 @@ docker run --rm --privileged --pid host \
   -e CKB_BIN=/path/to/ckb-testnet/ckb \
   ckb-probe:latest <command>
 
-# 或者直接在宿主机运行 (需要 root)
+# Or run directly on host (requires root)
 sudo ckb-probe <command>
 ```
 
 ---
 
-## 步骤 1: 环境检查与 eBPF 验证
+## Step 1: Environment Check and eBPF Validation
 
-**目的：** 验证 eBPF 环境就绪、CKB 二进制可探测、所有 uprobe/kprobe/tracepoint 可挂载。
+**Purpose:** Verify eBPF environment readiness, CKB binary probeability, and all uprobe/kprobe/tracepoint attachment.
 
-**命令：**
+**Command:**
 ```bash
 sudo ckb-probe check --binary /root/ckb-testnet/ckb --pid $(pgrep -x ckb)
 ```
 
-**完整终端输出：**
+**Full terminal output:**
 
 ```
 ╔══════════════════════════════════════════════════════════════╗
@@ -68,7 +68,7 @@ sudo ckb-probe check --binary /root/ckb-testnet/ckb --pid $(pgrep -x ckb)
   🎉 All checks passed!
 
 
-╔═════���════════════════════════════════════════════════════════╗
+╔══════════════════════════════════════════════════════════════╗
 ║  ckb-probe eBPF validation                                 ║
 ╠══════════════════════════════════════════════════════════════╣
   ✅ ── uprobe latency ──      entry/return pair attach test
@@ -122,24 +122,24 @@ sudo ckb-probe check --binary /root/ckb-testnet/ckb --pid $(pgrep -x ckb)
   📊 Captured 264 uprobe, 40 tcp, 438 syscall events in 3s
 ```
 
-**解读：**
-- **环境检查 8/8 全部通过**：内核 6.8.0 满足 >= 5.8 要求，BTF 可用，root 权限，bpf() 系统调用可用
-- **eBPF 验证 27/33 通过**：4 个 uprobe 延迟对（GET/PUT/WRITE/ITER）成功挂载，15/19 个 Tier 1 符号可用，4 个未找到的符号（delete/multi_get/transaction_get_cf）是 CKB 未使用的 RocksDB API，属于预期缺失
-- **kprobe/tracepoint 全部成功**：tcp_sendmsg/tcp_recvmsg 网络探针 + raw_syscalls 系统调用追踪
-- **实时事件采集验证**：3 秒内捕获 264 个 uprobe 事件 + 40 个 TCP 事件 + 438 个 syscall 事件，证明数据通道正常
+**Interpretation:**
+- **Environment checks 8/8 all passed**: Kernel 6.8.0 meets >= 5.8 requirement, BTF available, root privileges, bpf() syscall available
+- **eBPF validation 27/33 passed**: 4 uprobe latency pairs (GET/PUT/WRITE/ITER) successfully attached, 15/19 Tier 1 symbols available. 4 missing symbols (delete/multi_get/transaction_get_cf) are RocksDB APIs unused by CKB -- expected missing
+- **kprobe/tracepoint all succeeded**: tcp_sendmsg/tcp_recvmsg network probes + raw_syscalls system call tracing
+- **Live event collection verified**: 264 uprobe + 40 TCP + 438 syscall events captured in 3 seconds, confirming data pipeline is functional
 
 ---
 
-## 步骤 2: 符号分析
+## Step 2: Symbol Analysis
 
-**目的：** 全面分析 CKB 二进制中的 RocksDB 符号，评估 uprobe 覆盖率。
+**Purpose:** Comprehensive analysis of RocksDB symbols in the CKB binary, assessing uprobe coverage.
 
-**命令：**
+**Command:**
 ```bash
 ckb-probe symbols /root/ckb-testnet/ckb
 ```
 
-**完整终端输出：**
+**Full terminal output:**
 
 ```
 ════════════════════════════════════════════════════════════════════
@@ -209,26 +209,26 @@ ckb-probe symbols /root/ckb-testnet/ckb
 ════════════════════════════════════════════════════════════════════
 ```
 
-**解读：**
-- **Tier 1 (C API)** — 16/20 找到（80%），这些是 `extern "C"` 符号，跨 CKB 版本稳定，是 ckb-probe 的核心探测点
-- **RocksDB 静态链接** — 155 个 `rocksdb_*` 符号直接嵌入 CKB 二进制，无需额外的 `.so` 文件
-- **Tier 2 (Rust mangled)** — 11/21 找到，这些 Rust 函数名含编译哈希，不同版本可能变化
-- **Tier 3 (inlined)** — 19 个预期缺失，因为编译器内联优化消除了这些函数入口
+**Interpretation:**
+- **Tier 1 (C API)** -- 16/20 found (80%), these are `extern "C"` symbols, stable across CKB versions, core probe targets for ckb-probe
+- **RocksDB statically linked** -- 155 `rocksdb_*` symbols embedded directly in the CKB binary, no separate `.so` needed
+- **Tier 2 (Rust mangled)** -- 11/21 found, these Rust function names contain compilation hashes and may vary across versions
+- **Tier 3 (inlined)** -- 19 expected missing, eliminated by compiler inlining optimizations
 
 ---
 
-## 步骤 3: 正常同步期间的实时 RocksDB 监控
+## Step 3: Real-time RocksDB Monitoring During Normal Sync
 
-**目的：** 在 CKB 测试网节点正常运行期间，实时展示五类 RocksDB 操作的延迟、吞吐和延迟分布。
+**Purpose:** Display real-time latency, throughput, and latency distribution for five RocksDB operations during normal CKB testnet operation.
 
-### 3a. 统计表格模式
+### 3a. Stats Table Mode
 
-**命令：**
+**Command:**
 ```bash
 sudo ckb-probe rocksdb --binary /root/ckb-testnet/ckb --pid $(pgrep -x ckb) --interval 5
 ```
 
-**终端输出：**
+**Terminal output:**
 
 ```
 ╭───────────────── CKB RocksDB Monitor (PID: 2349824) ─────────────────╮
@@ -260,14 +260,14 @@ sudo ckb-probe rocksdb --binary /root/ckb-testnet/ckb --pid $(pgrep -x ckb) --in
   Status: ⏳ Warming up — Collecting baseline (290s remaining).
 ```
 
-### 3b. 延迟分布直方图模式
+### 3b. Latency Distribution Histogram Mode
 
-**命令：**
+**Command:**
 ```bash
 sudo ckb-probe rocksdb --binary /root/ckb-testnet/ckb --pid $(pgrep -x ckb) --histogram --interval 5
 ```
 
-**终端输出（表格下方附加直方图）：**
+**Terminal output (histogram below stats table):**
 
 ```
   GET latency distribution:
@@ -297,25 +297,25 @@ sudo ckb-probe rocksdb --binary /root/ckb-testnet/ckb --pid $(pgrep -x ckb) --hi
        262μs │████████████████████████████████████████     2
 ```
 
-**解读：**
-- **GET** 呈长尾分布：主体在 2~32us（缓存命中），少量尾部延迟由磁盘 I/O 引起
-- **PUT** 集中在 4~16us，单次写入非常轻量
-- **TXN_COMMIT** 在 65~262us 区间，反映 WAL 写入开销
-- 直方图数据来自 eBPF 内核态 per-CPU 计数器，零采样开销
+**Interpretation:**
+- **GET** shows a long-tail distribution: bulk at 2-32us (cache hits), occasional tail latencies from disk I/O
+- **PUT** concentrated at 4-16us, individual writes are very lightweight
+- **TXN_COMMIT** in the 65-262us range, reflecting WAL write overhead
+- Histogram data comes from eBPF kernel-space per-CPU counters with zero sampling overhead
 
 ---
 
-## 步骤 4: 慢操作捕获
+## Step 4: Slow Operation Capture
 
-**目的：** 实时捕获超过阈值的 RocksDB 操作，展示每个慢操作的精确延迟、数据大小和 BPF 事件丢失率。
+**Purpose:** Real-time capture of RocksDB operations exceeding a threshold, showing precise latency, data size, and BPF event loss rate.
 
-**命令：**
+**Command:**
 ```bash
 sudo ckb-probe rocksdb --binary /root/ckb-testnet/ckb --pid $(pgrep -x ckb) \
   --slow --threshold 1000 --interval 5
 ```
 
-**终端输出：**
+**Terminal output:**
 
 ```
 ╭───────────────── Slow Operations (threshold: 1000μs) ──────────────────╮
@@ -349,27 +349,27 @@ sudo ckb-probe rocksdb --binary /root/ckb-testnet/ckb --pid $(pgrep -x ckb) \
   BPF event loss: 0 / 32 attempted  (0.0000%)
 ```
 
-**解读：**
-- 仅超过 1000us (1ms) 的操作被捕获，常态下对系统零开销
-- 慢操作全部为 GET，延迟在 2~11ms，由 RocksDB block cache miss 触发磁盘读取导致
-- **BPF event loss: 0 / 32 (0.0000%)** — RingBuf 数据通道零丢失
-- Size 列显示该操作读写的数据大小（8B = key, 32~240B = value）
+**Interpretation:**
+- Only operations exceeding 1000us (1ms) are captured; zero overhead during normal operation
+- All slow operations are GETs, latency 2-11ms, caused by RocksDB block cache misses triggering disk reads
+- **BPF event loss: 0 / 32 (0.0000%)** -- RingBuf data channel with zero loss
+- Size column shows data size for each operation (8B = key, 32-240B = value)
 
 ---
 
-## 步骤 5: JSON 导出
+## Step 5: JSON Export
 
-**目的：** 展示机器可读的 JSON 输出格式，适合下游监控管线和数据分析。
+**Purpose:** Demonstrate machine-readable JSON output format, suitable for downstream monitoring pipelines and data analysis.
 
-### 5a. 标准 JSON 输出
+### 5a. Standard JSON Output
 
-**命令：**
+**Command:**
 ```bash
 sudo ckb-probe rocksdb --binary /root/ckb-testnet/ckb --pid $(pgrep -x ckb) \
   --json --interval 5
 ```
 
-**终端输出（单个采样周期）：**
+**Terminal output (single sampling cycle):**
 
 ```json
 {
@@ -417,15 +417,15 @@ sudo ckb-probe rocksdb --binary /root/ckb-testnet/ckb --pid $(pgrep -x ckb) \
 }
 ```
 
-### 5b. JSON + 直方图融合输出
+### 5b. JSON + Histogram Combined Output
 
-**命令：**
+**Command:**
 ```bash
 sudo ckb-probe rocksdb --binary /root/ckb-testnet/ckb --pid $(pgrep -x ckb) \
   --json --histogram --interval 5
 ```
 
-**终端输出（单个采样周期，含 histogram 字段）：**
+**Terminal output (single sampling cycle, with histogram field):**
 
 ```json
 {
@@ -462,97 +462,97 @@ sudo ckb-probe rocksdb --binary /root/ckb-testnet/ckb --pid $(pgrep -x ckb) \
 }
 ```
 
-### 5c. JSON 字段说明
+### 5c. JSON Field Reference
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `timestamp` | string | ISO 8601 UTC 时间戳 |
-| `pid` | number | 目标 CKB 进程 PID |
-| `uptime_secs` | number | ckb-probe 运行时长（秒） |
-| `operations` | object | 五个 RocksDB 操作的实时指标 |
-| `operations.*.qps` | number | 每秒操作数 |
-| `operations.*.avg_us` | number | 平均延迟（微秒） |
-| `operations.*.p50_us` | number | P50 延迟（微秒，log2 直方图插值） |
-| `operations.*.p99_us` | number | P99 延迟（微秒，log2 直方图插值） |
-| `operations.*.bytes_per_sec` | number / null | 吞吐量（B/s），WRITE/ITER_NEW 为 null |
-| `operations.*.histogram` | array | log2 延迟分布（仅 `--histogram` 时出现） |
-| `operations.*.histogram[].ge_us` | number | 桶下界（微秒） |
-| `operations.*.histogram[].count` | number | 该桶内的操作数 |
-| `anomalies` | array | EWMA 异常事件（5 分钟 warmup 后启用） |
-| `anomalies.*.trigger` | string | 触发条件组合：AVG / P99 / CAP |
-| `anomalies.*.multiplier` | number | 当前均值 / 基线均值 |
-
----
-
-## 附录 A: 48h 稳定性测试结果摘要
-
-> 完整报告见 `docs/STABILITY-REPORT_zh.md`
-
-| # | 指标 | 结果 | 关键数据 |
-|---|------|------|----------|
-| S-1 | 无崩溃 | **PASS** | 48h 全程无 panic/SIGSEGV |
-| S-2 | 内存稳定 | **PASS** | RSS 增长 0.00 MB（预算 5 MB） |
-| S-3 | 无 BPF 错误 | **PASS**\* | 误报（systemd 版本字符串匹配） |
-| S-4 | 重启恢复 | **PASS** | CKB 重启后 1 秒重连 |
-
-资源使用：Probe CPU P99=0.29%，RSS 稳定 21.4 MB，BPF 事件丢失 0/126,934 (0.0000%)
-
-## 附录 B: Case Study 结果摘要
-
-> 完整报告见 `docs/CASE-STUDY-REPORT_zh.md`
-
-**Case 1 (IBD 写入模式):** 22 分钟完整 IBD 追赶，GET 主导 (109.7 QPS)，6 个 ITER_NEW 异常事件
-
-**Case 2 (压缩风暴):** aggressive 调优下 GET 延迟从 ~200us 飙升至 6,988us (35x)，30 分钟捕获 6,112 个慢操作，零事件丢失
-
-## 附录 C: P-1~P-4 性能测试结果摘要
-
-> 完整报告见 Week 5 周报
-
-| 指标 | 结果 | 预算 |
-|------|------|------|
-| P-1 CPU 开销 | +2.11% (2h 综合) | <= 3% |
-| P-2 RSS | 21.97 MB (稳定) | <= 50 MB |
-| P-3 事件丢失 | 0/78,353 (0.0000%) | < 0.1% |
-| P-4 同步退化 | +0.37% (2h 综合) | < 1% |
-
-四项全部 PASS。
+| Field | Type | Description |
+|-------|------|-------------|
+| `timestamp` | string | ISO 8601 UTC timestamp |
+| `pid` | number | Target CKB process PID |
+| `uptime_secs` | number | ckb-probe uptime (seconds) |
+| `operations` | object | Real-time metrics for five RocksDB operations |
+| `operations.*.qps` | number | Operations per second |
+| `operations.*.avg_us` | number | Average latency (microseconds) |
+| `operations.*.p50_us` | number | P50 latency (microseconds, log2 histogram interpolation) |
+| `operations.*.p99_us` | number | P99 latency (microseconds, log2 histogram interpolation) |
+| `operations.*.bytes_per_sec` | number / null | Throughput (B/s), null for WRITE/ITER_NEW |
+| `operations.*.histogram` | array | log2 latency distribution (only with `--histogram`) |
+| `operations.*.histogram[].ge_us` | number | Bucket lower bound (microseconds) |
+| `operations.*.histogram[].count` | number | Number of operations in this bucket |
+| `anomalies` | array | EWMA anomaly events (enabled after 5-minute warmup) |
+| `anomalies.*.trigger` | string | Trigger condition combination: AVG / P99 / CAP |
+| `anomalies.*.multiplier` | number | Current mean / baseline mean ratio |
 
 ---
 
-## 运行模式总结
+## Appendix A: 48h Stability Test Results Summary
 
-| 模式 | 命令 | 输出格式 | 用途 |
-|------|------|----------|------|
-| 环境检查 | `check` | 文本 | 验证 eBPF 环境和符号可用性 |
-| 符号分析 | `symbols` | 文本 / JSON | 分析 CKB 二进制符号覆盖率 |
-| 实时表格 | `rocksdb` | TUI 表格 | 实时监控 QPS/延迟/吞吐 |
-| 延迟直方图 | `rocksdb --histogram` | TUI 直方图 | 分析延迟分布特征 |
-| 慢操作捕获 | `rocksdb --slow` | TUI 列表 | 捕获超阈值操作 |
-| JSON 输出 | `rocksdb --json` | JSONL | 机器可读，供下游管线消费 |
-| JSON + 直方图 | `rocksdb --json --histogram` | JSONL | 含 log2 延迟分布的完整导出 |
+> Full report: `docs/STABILITY-REPORT_zh.md`
+
+| # | Metric | Result | Key Data |
+|---|--------|--------|----------|
+| S-1 | No Crash | **PASS** | No panic/SIGSEGV during entire 48h |
+| S-2 | Memory Stable | **PASS** | RSS growth 0.00 MB (budget 5 MB) |
+| S-3 | No BPF Errors | **PASS**\* | False positive (systemd version string match) |
+| S-4 | Restart Recovery | **PASS** | 1-second reconnection after CKB restart |
+
+Resource usage: Probe CPU P99=0.29%, RSS stable 21.4 MB, BPF event loss 0/126,934 (0.0000%)
+
+## Appendix B: Case Study Results Summary
+
+> Full report: `docs/CASE-STUDY-REPORT_zh.md`
+
+**Case 1 (IBD Write Pattern):** 22-minute full IBD catch-up, GET-dominated (109.7 QPS), 6 ITER_NEW anomaly events
+
+**Case 2 (Compaction Storm):** Under aggressive tuning, GET latency spiked from ~200us to 6,988us (35x), 6,112 slow operations captured in 30 minutes, zero event loss
+
+## Appendix C: P-1~P-4 Performance Test Results Summary
+
+> Full report: Week 5 weekly report
+
+| Metric | Result | Budget |
+|--------|--------|--------|
+| P-1 CPU Overhead | +2.11% (2h aggregate) | <= 3% |
+| P-2 RSS | 21.97 MB (stable) | <= 50 MB |
+| P-3 Event Loss | 0/78,353 (0.0000%) | < 0.1% |
+| P-4 Sync Degradation | +0.37% (2h aggregate) | < 1% |
+
+All four metrics PASS.
 
 ---
 
-## 附录 D: Docker 构建与运行指南
+## Output Mode Summary
 
-### D.1 构建 Docker 镜像
+| Mode | Command | Output Format | Use Case |
+|------|---------|---------------|----------|
+| Environment Check | `check` | Text | Verify eBPF environment and symbol availability |
+| Symbol Analysis | `symbols` | Text / JSON | Analyze CKB binary symbol coverage |
+| Live Table | `rocksdb` | TUI Table | Real-time QPS/latency/throughput monitoring |
+| Latency Histogram | `rocksdb --histogram` | TUI Histogram | Analyze latency distribution patterns |
+| Slow Op Capture | `rocksdb --slow` | TUI List | Capture above-threshold operations |
+| JSON Output | `rocksdb --json` | JSONL | Machine-readable, for downstream pipelines |
+| JSON + Histogram | `rocksdb --json --histogram` | JSONL | Full export with log2 latency distribution |
+
+---
+
+## Appendix D: Docker Build and Run Guide
+
+### D.1 Build Docker Image
 
 ```bash
 cd /root/ckb-probe
 docker build -f docker/Dockerfile -t ckb-probe:latest .
 ```
 
-构建过程（两阶段构建）：
-- **Stage 1 (probe-builder)**：从 `rust:latest` 安装 Rust nightly + clang/llvm + bpf-linker，编译 eBPF 内核程序 + 用户态 CLI + db_bench
-- **Stage 2 (runtime)**：`ubuntu:24.04` 最小运行时，复制编译产物和脚本
+Build process (two-stage build):
+- **Stage 1 (probe-builder)**: Install Rust nightly + clang/llvm + bpf-linker from `rust:latest`, compile eBPF kernel program + userspace CLI + db_bench
+- **Stage 2 (runtime)**: `ubuntu:24.04` minimal runtime, copy build artifacts and scripts
 
-**注意：** CKB binary 不包含在镜像中，需通过 `-v` 从宿主机挂载。
+**Note:** CKB binary is NOT included in the image. It must be mounted from the host via `-v`.
 
-### D.2 通用 Docker 运行模板
+### D.2 Docker Run Template
 
 ```bash
-# 基础命令模板（所有 demo / case / perf / stability 通用）
+# Base command template (common for all demo / case / perf / stability)
 docker run --rm \
   --privileged --pid host \
   -v /sys/kernel/debug:/sys/kernel/debug:ro \
@@ -563,38 +563,38 @@ docker run --rm \
   ckb-probe:latest <command> [args...]
 ```
 
-**必需卷挂载说明：**
+**Required volume mounts:**
 
-| 挂载 | 用途 |
-|------|------|
-| `/sys/kernel/debug` | eBPF uprobe/kprobe 需要 debugfs |
-| `/sys/kernel/btf` | BTF 类型信息（内核 >= 5.8） |
-| `/root/ckb-testnet/ckb:/root/ckb-testnet/ckb:ro` | CKB 二进制（路径必须与宿主机进程 exe 一致） |
-| `/tmp/output:/tmp/perf-run` | 输出目录（报告、日志） |
+| Mount | Purpose |
+|-------|---------|
+| `/sys/kernel/debug` | eBPF uprobe/kprobe requires debugfs |
+| `/sys/kernel/btf` | BTF type information (kernel >= 5.8) |
+| `/root/ckb-testnet/ckb:/root/ckb-testnet/ckb:ro` | CKB binary (path must match host process exe) |
+| `/tmp/output:/tmp/perf-run` | Output directory (reports, logs) |
 
-**必需权限：**
-- `--privileged`：eBPF 需要 CAP_BPF + CAP_SYS_ADMIN
-- `--pid host`：访问宿主机进程的 PID namespace
+**Required privileges:**
+- `--privileged`: eBPF requires CAP_BPF + CAP_SYS_ADMIN
+- `--pid host`: Access to host PID namespace
 
 ---
 
-### D.3 Docker 内六个 Demo 执行方法与结果
+### D.3 Six Docker Demo Executions and Results
 
-以下所有命令均在 Docker 容器中执行，CKB 测试网节点运行在宿主机上。
+All commands below are executed in Docker containers, with the CKB testnet node running on the host.
 
-#### Demo 1: demo-check（环境检查 + 符号验证）
+#### Demo 1: demo-check (Environment Check + Symbol Validation)
 
-**命令：**
+**Command:**
 ```bash
 docker run --rm --privileged --pid host \
   -v /sys/kernel/debug:/sys/kernel/debug:ro \
   -v /sys/kernel/btf:/sys/kernel/btf:ro \
-  -v /root/ckb-testnet:/data \
-  -v /root/ckb-testnet/ckb:/usr/local/bin/ckb:ro \
+  -v /root/ckb-testnet/ckb:/root/ckb-testnet/ckb:ro \
+  -e CKB_BIN=/root/ckb-testnet/ckb \
   ckb-probe:latest demo-check
 ```
 
-**实际输出：**
+**Actual output:**
 ```
 ════════════════════════════════════════════════════════════════
   demo-check — environment + symbol report
@@ -633,23 +633,23 @@ docker run --rm --privileged --pid host \
   📊 Captured 264 uprobe, 40 tcp, 438 syscall events in 3s
 ```
 
-> 注：Docker 容器内 `/proc/config.gz` 不可用，导致 BPF config 检查失败（❌），但不影响实际 eBPF 功能。CKB symbols 检查在容器内因路径差异报 ❌，但 eBPF validation 部分确认了 15/19 个 Tier 1 符号实际可挂载。
+> Note: `/proc/config.gz` is not available inside Docker containers, causing the BPF config check to fail, but this does not affect actual eBPF functionality. The CKB symbols check reports failure due to path differences inside the container, but the eBPF validation section confirms 15/19 Tier 1 symbols are actually attachable.
 
 ---
 
-#### Demo 2: demo-table（实时统计表格）
+#### Demo 2: demo-table (Live Stats Table)
 
-**命令：**
+**Command:**
 ```bash
 docker run --rm --privileged --pid host \
   -v /sys/kernel/debug:/sys/kernel/debug:ro \
   -v /sys/kernel/btf:/sys/kernel/btf:ro \
-  -v /root/ckb-testnet:/data \
-  -v /root/ckb-testnet/ckb:/usr/local/bin/ckb:ro \
+  -v /root/ckb-testnet/ckb:/root/ckb-testnet/ckb:ro \
+  -e CKB_BIN=/root/ckb-testnet/ckb \
   ckb-probe:latest demo-table 60
 ```
 
-**实际输出：**
+**Actual output:**
 ```
 ╭───────────────── CKB RocksDB Monitor (PID: 2349824) ─────────────────╮
 │ Uptime: 00:00:15   Sampling: 5s   Node: CKB v0.204.0               │
@@ -667,19 +667,19 @@ docker run --rm --privileged --pid host \
 
 ---
 
-#### Demo 3: demo-histogram（延迟分布直方图）
+#### Demo 3: demo-histogram (Latency Distribution Histogram)
 
-**命令：**
+**Command:**
 ```bash
 docker run --rm --privileged --pid host \
   -v /sys/kernel/debug:/sys/kernel/debug:ro \
   -v /sys/kernel/btf:/sys/kernel/btf:ro \
-  -v /root/ckb-testnet:/data \
-  -v /root/ckb-testnet/ckb:/usr/local/bin/ckb:ro \
+  -v /root/ckb-testnet/ckb:/root/ckb-testnet/ckb:ro \
+  -e CKB_BIN=/root/ckb-testnet/ckb \
   ckb-probe:latest demo-histogram 60
 ```
 
-**实际输出：**
+**Actual output:**
 ```
   GET latency distribution:
          2μs │████                                         6
@@ -702,21 +702,21 @@ docker run --rm --privileged --pid host \
 
 ---
 
-#### Demo 4: demo-slow（慢操作捕获）
+#### Demo 4: demo-slow (Slow Operation Capture)
 
-**命令：**
+**Command:**
 ```bash
 docker run --rm --privileged --pid host \
   -v /sys/kernel/debug:/sys/kernel/debug:ro \
   -v /sys/kernel/btf:/sys/kernel/btf:ro \
-  -v /root/ckb-testnet:/data \
-  -v /root/ckb-testnet/ckb:/usr/local/bin/ckb:ro \
+  -v /root/ckb-testnet/ckb:/root/ckb-testnet/ckb:ro \
+  -e CKB_BIN=/root/ckb-testnet/ckb \
   ckb-probe:latest demo-slow 60 1000
 ```
 
-参数说明：`60` = 运行 60 秒，`1000` = 阈值 1000us
+Parameters: `60` = run for 60 seconds, `1000` = threshold 1000us
 
-**实际输出：**
+**Actual output:**
 ```
 ╭───────────────── Slow Operations (threshold: 1000μs) ──────────────────╮
 │ Timestamp     │ Op         │   Latency │     Size │ Note               │
@@ -736,20 +736,20 @@ docker run --rm --privileged --pid host \
 
 ---
 
-#### Demo 5: demo-normal（JSON 监控输出）
+#### Demo 5: demo-normal (JSON Monitoring Output)
 
-**命令：**
+**Command:**
 ```bash
 docker run --rm --privileged --pid host \
   -v /sys/kernel/debug:/sys/kernel/debug:ro \
   -v /sys/kernel/btf:/sys/kernel/btf:ro \
-  -v /root/ckb-testnet:/data \
-  -v /root/ckb-testnet/ckb:/usr/local/bin/ckb:ro \
+  -v /root/ckb-testnet/ckb:/root/ckb-testnet/ckb:ro \
+  -e CKB_BIN=/root/ckb-testnet/ckb \
   -v /tmp/output:/tmp/perf-run \
   ckb-probe:latest demo-normal 60
 ```
 
-**实际输出（最后一个采样周期）：**
+**Actual output (last sampling cycle):**
 ```json
 {
   "anomalies": [],
@@ -796,26 +796,26 @@ docker run --rm --privileged --pid host \
 }
 ```
 
-输出保存到 `/tmp/perf-run/demo/demo-normal-snapshot.json`。
+Output saved to `/tmp/perf-run/demo/demo-normal-snapshot.json`.
 
 ---
 
-#### Demo 6: demo-stress（压力注入 + 异常检测）
+#### Demo 6: demo-stress (Stress Injection + Anomaly Detection)
 
-**命令：**
+**Command:**
 ```bash
 docker run --rm --privileged --pid host \
   -v /sys/kernel/debug:/sys/kernel/debug:ro \
   -v /sys/kernel/btf:/sys/kernel/btf:ro \
-  -v /root/ckb-testnet:/data \
-  -v /root/ckb-testnet/ckb:/usr/local/bin/ckb:ro \
+  -v /root/ckb-testnet/ckb:/root/ckb-testnet/ckb:ro \
+  -e CKB_BIN=/root/ckb-testnet/ckb \
   -v /tmp/output:/tmp/perf-run \
   ckb-probe:latest demo-stress 50000
 ```
 
-参数说明：`50000` = db_bench 写入 50,000 条记录（每条 4KB，共 ~195MB）
+Parameters: `50000` = db_bench writes 50,000 records (4KB each, ~195MB total)
 
-**实际输出：**
+**Actual output:**
 ```
 ════════════════════════════════════════════════════════════════
   demo-stress — synthetic RocksDB load injection (db_bench)
@@ -847,46 +847,45 @@ Note: no ANOMALY DETECTED triggered. This can happen if the disk had
       Try with a larger --num or apply db-options.aggressive via case-2.
 ```
 
-> 注：本次测试磁盘有足够的 I/O headroom 吸收了 db_bench 负载，未触发 ANOMALY DETECTED。在磁盘 I/O 更紧张的环境下（或使用 aggressive RocksDB 调优），异常检测会被触发。Case 2 的压缩风暴测试已验证此能力（GET 延迟 35x 飙升，6,112 个慢操作）。
+> Note: In this test, the disk had enough I/O headroom to absorb the db_bench load without triggering ANOMALY DETECTED. Under tighter disk I/O conditions (or with aggressive RocksDB tuning), anomaly detection will trigger. Case 2's compaction storm test has verified this capability (GET latency 35x spike, 6,112 slow operations).
 
 ---
 
-### D.4 三项长时间测试的 Docker 命令
+### D.4 Three Long-Running Test Docker Commands
 
-#### 48h 稳定性测试 (S-1 ~ S-4)
+#### 48h Stability Test (S-1 ~ S-4)
 
 ```bash
 docker run -d --name stability-test \
   --privileged --pid host --network host \
   -v /sys/kernel/debug:/sys/kernel/debug:ro \
   -v /sys/kernel/btf:/sys/kernel/btf:ro \
-  -v /root/ckb-testnet:/data \
   -v /root/ckb-testnet/ckb:/root/ckb-testnet/ckb:ro \
   -v /tmp/perf-run:/tmp/perf-run \
   -e CKB_BIN=/root/ckb-testnet/ckb \
   -e CKB_RPC=http://127.0.0.1:8124 \
   ckb-probe:latest stability
 
-# 查看进度
+# Check progress
 docker logs -f stability-test
 
-# 测试完成后生成报告
+# Generate report after test completion
 docker exec stability-test bash -c \
   '/opt/scripts/stability/generate-report.sh /path/to/stability-<timestamp>/'
 ```
 
-测试内容：48 小时持续运行，3 个 ckb-probe 实例并行采集，含 T+24h 的 CKB 进程重启恢复测试。
+Test coverage: 48 hours continuous operation, 3 parallel ckb-probe instances, including CKB process restart recovery test at T+24h.
 
-#### Case 1: IBD 写入模式 (最长 2 小时)
+#### Case 1: IBD Write Pattern (up to 2 hours)
 
 ```bash
 docker run --rm \
   --privileged --pid host \
   -v /sys/kernel/debug:/sys/kernel/debug:ro \
   -v /sys/kernel/btf:/sys/kernel/btf:ro \
-  -v /root/ckb-testnet:/data \
-  -v /root/ckb-testnet/ckb:/usr/local/bin/ckb:ro \
+  -v /root/ckb-testnet/ckb:/root/ckb-testnet/ckb:ro \
   -v /tmp/case-output:/tmp/perf-run \
+  -e CKB_BIN=/root/ckb-testnet/ckb \
   --entrypoint bash \
   ckb-probe:latest -c '
     /opt/scripts/case/start-ckb.sh
@@ -894,18 +893,18 @@ docker run --rm \
   '
 ```
 
-脚本会自动在 tip 追上网络最新高度时提前退出。
+The script automatically exits early when the tip catches up to the latest network height.
 
-#### Case 2: 压缩风暴捕获 (最长 30 分钟)
+#### Case 2: Compaction Storm Capture (up to 30 minutes)
 
 ```bash
 docker run --rm \
   --privileged --pid host \
   -v /sys/kernel/debug:/sys/kernel/debug:ro \
   -v /sys/kernel/btf:/sys/kernel/btf:ro \
-  -v /root/ckb-testnet:/data \
-  -v /root/ckb-testnet/ckb:/usr/local/bin/ckb:ro \
+  -v /root/ckb-testnet/ckb:/root/ckb-testnet/ckb:ro \
   -v /tmp/case-output:/tmp/perf-run \
+  -e CKB_BIN=/root/ckb-testnet/ckb \
   --entrypoint bash \
   ckb-probe:latest -c '
     /opt/scripts/case/start-ckb.sh
@@ -913,21 +912,19 @@ docker run --rm \
   '
 ```
 
-脚本会自动应用 aggressive RocksDB 调优、重启 CKB、挂载探针、等待慢操作数据，结束后自动恢复原始配置。
+The script automatically applies aggressive RocksDB tuning, restarts CKB, attaches probes, waits for slow operation data, and restores the original configuration when finished.
 
-#### P-1 ~ P-4 性能测试 (约 4 小时)
+#### P-1 ~ P-4 Performance Tests (~4 hours)
 
 ```bash
 docker run --rm \
   --privileged --pid host \
   -v /sys/kernel/debug:/sys/kernel/debug:ro \
   -v /sys/kernel/btf:/sys/kernel/btf:ro \
-  -v /root/ckb-testnet:/data \
-  -v /root/ckb-testnet/ckb:/usr/local/bin/ckb:ro \
+  -v /root/ckb-testnet/ckb:/root/ckb-testnet/ckb:ro \
   -v /tmp/perf-output:/tmp/perf-run \
+  -e CKB_BIN=/root/ckb-testnet/ckb \
   ckb-probe:latest perf
 ```
 
-Phase A (2h with-probe) + Phase B (2h baseline)，均从相同 tip 启动，自动对比 CPU / RSS / 事件丢失 / 同步速度。
-
-
+Phase A (2h with-probe) + Phase B (2h baseline), both starting from the same tip, automatically comparing CPU / RSS / event loss / sync speed.
