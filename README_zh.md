@@ -245,9 +245,16 @@ ckb-probe/
 | 文档 | EN | 中文 |
 |------|-----|------|
 | 从零开始使用指南 | [EN](docs/getting-started_en.md) | [中文](docs/getting-started_zh.md) |
-| 测试基础设施指南 | [EN](docs/test-infrastructure_en.md) | [中文](docs/test-infrastructure_zh.md) |
-| 技术深度分析 | [EN](docs/technical-deep-dive_en.md) | [中文](docs/technical-deep-dive_zh.md) |
 | Docker 快速入门 | [EN](docs/docker-quickstart.md) | [中文](docs/docker-quickstart_zh.md) |
+| 技术深度分析 | [EN](docs/technical-deep-dive_en.md) | [中文](docs/technical-deep-dive_zh.md) |
+| 代码架构 | [EN](docs/code-architecture.md) | [中文](docs/code-architecture_zh.md) |
+| 演示流程 | [EN](docs/demo-walkthrough_en.md) | [中文](docs/demo-walkthrough_zh.md) |
+| 测试基础设施指南 | [EN](docs/test-infrastructure_en.md) | [中文](docs/test-infrastructure_zh.md) |
+| 稳定性报告 | [EN](docs/STABILITY-REPORT.md) | [中文](docs/STABILITY-REPORT_zh.md) |
+| 案例研究报告 | — | [中文](docs/CASE-STUDY-REPORT_zh.md) |
+| 结项报告 | [EN](docs/final-report_en.md) | [中文](docs/final-report_zh.md) |
+| 月度报告（最终） | [EN](docs/monthly-report-final_en.md) | [中文](docs/monthly-report-final_zh.md) |
+| Release Notes v0.1.0 | [EN](docs/RELEASE-v0.1.0.md) | — |
 
 ## 验收清单
 

@@ -24,4 +24,6 @@ self-compiled*.json
 official-release*.json
 self-compiled*.txt
 official-release*.txt
-report-*.md
+weekly-*.md
+report-week*.md
+main_proj.md

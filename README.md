@@ -245,9 +245,16 @@ ckb-probe/
 | Document | EN | 中文 |
 |----------|-----|------|
 | Getting Started | [EN](docs/getting-started_en.md) | [中文](docs/getting-started_zh.md) |
-| Test Infrastructure | [EN](docs/test-infrastructure_en.md) | [中文](docs/test-infrastructure_zh.md) |
-| Technical Deep Dive | [EN](docs/technical-deep-dive_en.md) | [中文](docs/technical-deep-dive_zh.md) |
 | Docker Quickstart | [EN](docs/docker-quickstart.md) | [中文](docs/docker-quickstart_zh.md) |
+| Technical Deep Dive | [EN](docs/technical-deep-dive_en.md) | [中文](docs/technical-deep-dive_zh.md) |
+| Code Architecture | [EN](docs/code-architecture.md) | [中文](docs/code-architecture_zh.md) |
+| Demo Walkthrough | [EN](docs/demo-walkthrough_en.md) | [中文](docs/demo-walkthrough_zh.md) |
+| Test Infrastructure | [EN](docs/test-infrastructure_en.md) | [中文](docs/test-infrastructure_zh.md) |
+| Stability Report | [EN](docs/STABILITY-REPORT.md) | [中文](docs/STABILITY-REPORT_zh.md) |
+| Case Study Report | — | [中文](docs/CASE-STUDY-REPORT_zh.md) |
+| Final Report | [EN](docs/final-report_en.md) | [中文](docs/final-report_zh.md) |
+| Monthly Report (Final) | [EN](docs/monthly-report-final_en.md) | [中文](docs/monthly-report-final_zh.md) |
+| Release Notes v0.1.0 | [EN](docs/RELEASE-v0.1.0.md) | — |
 
 ## Verification Checklist
 
