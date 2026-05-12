@@ -120,9 +120,8 @@ fn uprobe_entry(func_id: u32) {
 
 #[inline(always)]
 fn uprobe_entry_with_size(func_id: u32, size: u64) {
-    if !is_target_pid() {
-        return;
-    }
+    // PID filtering happens at uprobe attach time (kernel-level).
+    // Avoid BPF-side hashmap lookup — broken under WSL2 JIT inlining.
     let (_, tid) = current_pid_tid();
     let ts = unsafe { bpf_ktime_get_ns() };
     let _ = UPROBE_START.insert(&tid, &(ts, func_id, size), 0);
@@ -313,11 +312,9 @@ pub fn rocksdb_multi_get_cf_return(ctx: RetProbeContext) -> u32 {
 #[uprobe]
 pub fn rocksdb_transaction_put_cf_entry(ctx: ProbeContext) -> u32 {
     let vlen: usize = ctx.arg(5).unwrap_or(0);
-    if is_target_pid() {
-        let (_, tid) = current_pid_tid();
-        let prev = unsafe { PUT_PENDING_BYTES.get(&tid).copied().unwrap_or(0) };
-        let _ = PUT_PENDING_BYTES.insert(&tid, &(prev + vlen as u64), 0);
-    }
+    let (_, tid) = current_pid_tid();
+    let prev = unsafe { PUT_PENDING_BYTES.get(&tid).copied().unwrap_or(0) };
+    let _ = PUT_PENDING_BYTES.insert(&tid, &(prev + vlen as u64), 0);
     uprobe_entry_with_size(RocksDbFunc::TransactionPutCf as u32, vlen as u64);
     0
 }
@@ -335,13 +332,11 @@ pub fn rocksdb_transaction_put_cf_return(ctx: RetProbeContext) -> u32 {
 #[uprobe]
 pub fn rocksdb_transaction_commit_entry(_ctx: ProbeContext) -> u32 {
     let mut commit_size: u64 = 0;
-    if is_target_pid() {
-        let (_, tid) = current_pid_tid();
-        unsafe {
-            if let Some(&v) = PUT_PENDING_BYTES.get(&tid) {
-                commit_size = v;
-                let _ = PUT_PENDING_BYTES.remove(&tid);
-            }
+    let (_, tid) = current_pid_tid();
+    unsafe {
+        if let Some(&v) = PUT_PENDING_BYTES.get(&tid) {
+            commit_size = v;
+            let _ = PUT_PENDING_BYTES.remove(&tid);
         }
     }
     uprobe_entry_with_size(RocksDbFunc::TransactionCommit as u32, commit_size);

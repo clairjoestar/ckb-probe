@@ -264,11 +264,11 @@ pub async fn run(mut args: RocksdbArgs) -> Result<()> {
         for &(entry_fn, ret_fn, symbol, func_id, display, has_bytes) in MONITOR_PROBES {
             let uprobe: &mut UProbe = bpf.program_mut(entry_fn).unwrap().try_into()?;
             uprobe.load()?;
-            match uprobe.attach(Some(symbol), 0, &binary, None) {
+            match uprobe.attach(Some(symbol), 0, &binary, Some(current_pid as i32)) {
                 Ok(_) => {
                     let uretprobe: &mut UProbe = bpf.program_mut(ret_fn).unwrap().try_into()?;
                     uretprobe.load()?;
-                    uretprobe.attach(Some(symbol), 0, &binary, None)?;
+                    uretprobe.attach(Some(symbol), 0, &binary, Some(current_pid as i32))?;
                     attached.push((func_id, display, has_bytes));
                     eprintln!("  ✅ attached {}", symbol);
                 }
