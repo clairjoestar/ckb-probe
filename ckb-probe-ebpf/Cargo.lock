@@ -138,7 +138,7 @@ dependencies = [
 
 [[package]]
 name = "ckb-probe-common"
-version = "0.1.0"
+version = "0.1.1"
 
 [[package]]
 name = "ckb-probe-ebpf"

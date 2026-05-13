@@ -34,11 +34,83 @@ ckb-probe 通过 eBPF（uprobe / kprobe / tracepoint）为 CKB 全节点提供�
 
 - Linux 内核 ≥ 5.8，支持 BTF（`/sys/kernel/btf/vmlinux`）
 - Root 或 CAP_BPF + CAP_SYS_ADMIN
-- Docker ≥ 20.10
 - CKB testnet 节点及数据目录
 - **仅限 testnet，永远不要在 mainnet 上使用**
 
-### 1. Clone 并构建 Docker 镜像
+有两种使用方式：**手动编译**（直接在宿主机运行）或 **Docker**（推荐，环境可复现）。
+
+---
+
+### 方式一：手动编译运行
+
+#### 1. 安装依赖
+
+```bash
+# Ubuntu / Debian
+sudo apt-get update && sudo apt-get install -y \
+    clang llvm libelf-dev zlib1g-dev pkg-config \
+    curl build-essential
+
+# 安装 Rust（如未安装）
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source ~/.cargo/env
+
+# 安装 nightly 工具链和 BPF linker
+rustup install nightly
+rustup component add rust-src --toolchain nightly
+cargo install bpf-linker --locked
+```
+
+#### 2. Clone 并编译
+
+```bash
+git clone https://github.com/<org>/ckb-probe.git
+cd ckb-probe
+
+# 编译 eBPF 程序（需要 nightly）
+cargo xtask build-ebpf --release
+
+# 编译用户态程序
+cargo build --release -p ckb-probe
+```
+
+编译产物：
+- 用户态：`target/release/ckb-probe`
+- eBPF：`ckb-probe-ebpf/target/bpfel-unknown-none/release/ckb-probe-ebpf`
+
+#### 3. 运行
+
+```bash
+# 确认 CKB 正在运行
+CKB_PID=$(pgrep -x ckb)
+CKB_BIN=$(readlink /proc/$CKB_PID/exe)
+
+# 环境检查 + eBPF 探针验证
+sudo ./target/release/ckb-probe check --binary $CKB_BIN
+
+# ELF 符号分析
+sudo ./target/release/ckb-probe symbols --binary $CKB_BIN
+
+# RocksDB 实时监控（表格模式）
+sudo ./target/release/ckb-probe rocksdb --binary $CKB_BIN --pid $CKB_PID
+
+# 直方图模式
+sudo ./target/release/ckb-probe rocksdb --binary $CKB_BIN --pid $CKB_PID --histogram
+
+# 慢操作捕获（阈值 1ms）
+sudo ./target/release/ckb-probe rocksdb --binary $CKB_BIN --pid $CKB_PID --slow --threshold 1000
+
+# JSON 输出
+sudo ./target/release/ckb-probe rocksdb --binary $CKB_BIN --pid $CKB_PID --json
+```
+
+> **注意：** 运行 ckb-probe 时，当前工作目录必须包含 `ckb-probe-ebpf/target/bpfel-unknown-none/release/ckb-probe-ebpf`（即项目根目录），否则会找不到 eBPF 程序。
+
+---
+
+### 方式二：Docker 运行（推荐）
+
+#### 1. 构建 Docker 镜像
 
 ```bash
 git clone https://github.com/<org>/ckb-probe.git

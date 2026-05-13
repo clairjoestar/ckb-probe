@@ -46,6 +46,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && cd /tmp/rocksdb \
     && make -j$(nproc) db_bench \
     && cp db_bench /usr/local/bin/db_bench \
+    && cp librocksdb.so.9.10* /usr/local/lib/ \
+    && ldconfig \
     && rm -rf /tmp/rocksdb
 
 # ═══════════════════════════════════════════════════════════════
@@ -84,8 +86,10 @@ COPY --from=probe-builder \
     /workspace/ckb-probe-ebpf/target/bpfel-unknown-none/release/ckb-probe-ebpf \
     /opt/ckb-probe-ebpf/target/bpfel-unknown-none/release/ckb-probe-ebpf
 
-# db_bench for demo-stress
+# db_bench for demo-stress (with its shared library)
 COPY --from=probe-builder /usr/local/bin/db_bench /usr/local/bin/db_bench
+COPY --from=probe-builder /usr/local/lib/librocksdb.so.9.10* /usr/local/lib/
+RUN ldconfig
 
 # All scripts (perf / demo / case / stability)
 COPY docker/scripts/      /opt/scripts/

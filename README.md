@@ -34,11 +34,83 @@ ckb-probe leverages eBPF (uprobe / kprobe / tracepoint) to deliver application-s
 
 - Linux kernel ≥ 5.8 with BTF support (`/sys/kernel/btf/vmlinux`)
 - Root or CAP_BPF + CAP_SYS_ADMIN
-- Docker ≥ 20.10
 - CKB testnet node with data directory
 - **Testnet only. Never use with mainnet.**
 
-### 1. Clone and build Docker image
+Two ways to use: **manual build** (run directly on host) or **Docker** (recommended, reproducible environment).
+
+---
+
+### Option A: Manual Build
+
+#### 1. Install dependencies
+
+```bash
+# Ubuntu / Debian
+sudo apt-get update && sudo apt-get install -y \
+    clang llvm libelf-dev zlib1g-dev pkg-config \
+    curl build-essential
+
+# Install Rust (if not already installed)
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source ~/.cargo/env
+
+# Install nightly toolchain and BPF linker
+rustup install nightly
+rustup component add rust-src --toolchain nightly
+cargo install bpf-linker --locked
+```
+
+#### 2. Clone and build
+
+```bash
+git clone https://github.com/<org>/ckb-probe.git
+cd ckb-probe
+
+# Build eBPF programs (requires nightly)
+cargo xtask build-ebpf --release
+
+# Build userspace binary
+cargo build --release -p ckb-probe
+```
+
+Build artifacts:
+- Userspace: `target/release/ckb-probe`
+- eBPF: `ckb-probe-ebpf/target/bpfel-unknown-none/release/ckb-probe-ebpf`
+
+#### 3. Run
+
+```bash
+# Find running CKB process
+CKB_PID=$(pgrep -x ckb)
+CKB_BIN=$(readlink /proc/$CKB_PID/exe)
+
+# Environment check + eBPF probe validation
+sudo ./target/release/ckb-probe check --binary $CKB_BIN
+
+# ELF symbol analysis
+sudo ./target/release/ckb-probe symbols --binary $CKB_BIN
+
+# RocksDB real-time monitoring (table mode)
+sudo ./target/release/ckb-probe rocksdb --binary $CKB_BIN --pid $CKB_PID
+
+# Histogram mode
+sudo ./target/release/ckb-probe rocksdb --binary $CKB_BIN --pid $CKB_PID --histogram
+
+# Slow operations capture (threshold 1ms)
+sudo ./target/release/ckb-probe rocksdb --binary $CKB_BIN --pid $CKB_PID --slow --threshold 1000
+
+# JSON output
+sudo ./target/release/ckb-probe rocksdb --binary $CKB_BIN --pid $CKB_PID --json
+```
+
+> **Note:** The working directory must contain `ckb-probe-ebpf/target/bpfel-unknown-none/release/ckb-probe-ebpf` (i.e., run from the project root), otherwise the eBPF program won't be found.
+
+---
+
+### Option B: Docker (Recommended)
+
+#### 1. Build Docker image
 
 ```bash
 git clone https://github.com/<org>/ckb-probe.git
